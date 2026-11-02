@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psf-fomo"
+version = "0.0.1"
+description = "PSF simulation, moments validation and Piff validation test bench for Roman WFI"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+# Piff is deliberately not listed: install the pinned clone of Piff `main` yourself
+# (see README). The PyPI release is older than the version this package is built against.
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy",
+    "matplotlib",
+    "pyyaml",
+    "galsim",
+]
+
+[project.optional-dependencies]
+moments = ["ngmix"]
+stats = ["treecorr"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Slow tests (Roman getPSF calls at Piff's pupil_bin=4) are skipped by default.
+# Run them with `pytest -m slow`; the last -m on the command line wins.
+addopts = "-m 'not slow'"
+markers = [
+    "slow: tests that call galsim.roman.getPSF or run Piff fits (minutes)",
+]

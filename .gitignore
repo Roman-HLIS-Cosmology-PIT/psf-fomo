@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# psf-fomo: notebooks live outside this repository for now; run outputs are not tracked
+*.ipynb
+out/
