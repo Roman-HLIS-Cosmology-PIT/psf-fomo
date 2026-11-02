@@ -542,8 +542,9 @@ class Simulation:
         Returns
         -------
         galsim.Image
-            Unit-flux PSF image with a WCS that is the local WCS at the star scaled by
-            1/oversample.
+            Image of the unit-flux PSF, with a WCS that is the local WCS at the star scaled by
+            1/oversample. The image sums to the flux fraction inside the box (≈ 0.93 for
+            25 native pixels in H158, because of the PSF wings), not to 1.
         """
         found_sca, i = self._locate(star_id, obs)
         if found_sca != sca:

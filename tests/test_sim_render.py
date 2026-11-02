@@ -44,7 +44,13 @@ def test_run_is_reproducible(default_run):
 def test_truth_psf(default_run):
     with_pixel = default_run.truth_psf(1, 0, 0, oversample=5)
     no_pixel = default_run.truth_psf(1, 0, 0, oversample=5, include_pixel=False)
-    np.testing.assert_allclose(with_pixel.array.sum(), 1.0, atol=0.03)
+    # The PSF wings extend beyond a 25-pixel box, so compare enclosed flux on the same
+    # 64-pixel box: oversampled truth vs. the native-pixel noiseless image.
+    big = default_run.truth_psf(1, 0, 0, oversample=5, size=64)
+    native_fraction = (default_run.noiseless[0, 1].array.sum() * GAIN
+                       / default_run.catalogs[0][0]["flux"])
+    np.testing.assert_allclose(big.array.sum(), native_fraction, rtol=5e-3)
+    assert with_pixel.array.sum() < big.array.sum() < 1.0
     # The pixel response adds size: HSM sigma is larger with the pixel.
     s_pix = with_pixel.FindAdaptiveMom().moments_sigma
     s_nopix = no_pixel.FindAdaptiveMom().moments_sigma
