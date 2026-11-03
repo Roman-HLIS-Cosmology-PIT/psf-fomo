@@ -39,7 +39,12 @@ def test_save_load_round_trip(tmp_path):
     for key, image in sim.images.items():
         np.testing.assert_array_equal(loaded.images[key].array, image.array)
         assert loaded.images[key].bounds == image.bounds
-        assert loaded.images[key].wcs == image.wcs
+        # FITS round trip may return an equivalent WCS of another class (e.g. a PixelScale
+        # comes back as an OffsetWCS with zero offsets): compare the mapping, not the type.
+        pos = galsim.PositionD(20.0, 30.0)
+        assert loaded.images[key].wcs.toWorld(pos) == image.wcs.toWorld(pos)
+        np.testing.assert_allclose(loaded.images[key].wcs.jacobian(pos).getMatrix(),
+                                   image.wcs.jacobian(pos).getMatrix())
     for t1, t2 in zip(sim.catalogs, loaded.catalogs):
         assert t1.colnames == t2.colnames
         for name in t1.colnames:

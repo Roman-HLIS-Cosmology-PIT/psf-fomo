@@ -7,4 +7,5 @@
 | `conflicts.md` | conflicts with CLAUDE.md + §6 checklist status | done for Piff / prev_code |
 | `galsim_roman.md` | `galsim.roman` getPSF, getWCS, bandpasses/zeropoints, detector/noise functions | **not started**. Needs a decision on reading installed sources vs docs (conflicts.md #19) |
 | `ngmix.md` | admom, gaussmom, conventions | **not started** (same) |
+| `moments_findings.md` | Phase 3 results: moment algorithms on native H158 stamps, calibration, open checks | Phase 3 (2026-11-03) |
 | `treecorr.md` | what ρ/τ need | **not started**. Piff's `RhoStats` usage is summarised in `piff.md` §6 |

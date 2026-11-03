@@ -6,6 +6,7 @@ def test_package_imports():
     import psf_fomo.sim
     from psf_fomo.sim import RomanSimulation, Simulation, load_simulation  # noqa: F401
     import psf_fomo.moments
+    from psf_fomo.moments import MomentsValidation, MomentsResult, load_moments  # noqa: F401
     import psf_fomo.piffval
     import psf_fomo.reference
 
