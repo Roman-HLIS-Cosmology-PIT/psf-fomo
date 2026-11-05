@@ -2,9 +2,11 @@ import numpy as np
 import galsim
 import galsim.roman
 
+import pytest
+
 from psf_fomo.sim.psf import (MTF_BASE_SIGMA, MTF_REL_SIGMAS, MTF_WEIGHTS, apply_errors,
-                              jitter_kernel, linear_field, mtf_kernel, random_walk_offsets,
-                              timeseries_offsets)
+                              clip_to_psd, gaussian_kernel, jitter_kernel, linear_field,
+                              mtf_kernel, random_walk_offsets, timeseries_offsets)
 
 PIX = galsim.roman.pixel_scale
 
@@ -59,6 +61,44 @@ def test_error_chain_second_moments():
     ixx, _, iyy = unweighted_moments(prof, 0.004, 600)
     np.testing.assert_allclose([ixx, iyy], expected, rtol=2e-3)
     np.testing.assert_allclose(prof.flux, 1.0)
+
+
+def test_gaussian_kernel_moments():
+    # M is in native pix² along world axes; on the sky it is M × 0.11″².
+    m = (0.03, 0.01, 0.02)
+    kern = gaussian_kernel(*m)
+    ixx, ixy, iyy = unweighted_moments(kern, 0.002, 400)
+    np.testing.assert_allclose(np.array([ixx, ixy, iyy]) / PIX**2, m, rtol=2e-3, atol=1e-6)
+    np.testing.assert_allclose(kern.flux, 1.0)
+
+
+def test_gaussian_kernel_adds_moments_in_chain():
+    m = (0.022, 0.0, 0.022)
+    local = galsim.PixelScale(PIX).local()
+    base = galsim.Gaussian(sigma=0.1)
+    prof = apply_errors(base, local, kernel=gaussian_kernel(*m))
+    ixx, ixy, iyy = unweighted_moments(prof, 0.004, 400)
+    np.testing.assert_allclose([ixx, iyy], 0.01 + 0.022 * PIX**2, rtol=1e-3)
+    # Not dilated with the optics: with dilation the kernel's contribution is unchanged.
+    prof = apply_errors(base, local, dilation=1.1, kernel=gaussian_kernel(*m))
+    ixx, _, _ = unweighted_moments(prof, 0.004, 400)
+    np.testing.assert_allclose(ixx, 0.0121 + 0.022 * PIX**2, rtol=1e-3)
+
+
+def test_gaussian_kernel_rank_one_and_non_psd():
+    # A line along u cannot be sampled on its own: convolve it with a round Gaussian.
+    prof = galsim.Convolve(galsim.Gaussian(sigma=0.05), gaussian_kernel(0.02, 0.0, 0.0))
+    ixx, _, iyy = unweighted_moments(prof, 0.002, 400)
+    np.testing.assert_allclose(ixx, 0.05**2 + 0.02 * PIX**2, rtol=2e-3)
+    np.testing.assert_allclose(iyy, 0.05**2, rtol=2e-3)
+    with pytest.raises(ValueError):
+        gaussian_kernel(0.01, 0.02, 0.01)
+
+
+def test_clip_to_psd():
+    assert clip_to_psd(0.02, 0.005, 0.01) == (0.02, 0.005, 0.01)
+    mxx, mxy, myy = clip_to_psd(0.01, 0.02, 0.01)  # eigenvalues 0.03, -0.01
+    np.testing.assert_allclose([mxx, mxy, myy], [0.015, 0.015, 0.015])
 
 
 def test_shear_changes_ellipticity():

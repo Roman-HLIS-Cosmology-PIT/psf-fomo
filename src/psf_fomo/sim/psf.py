@@ -2,7 +2,7 @@
 
 Rendering chain for one star (CLAUDE.md §5.2):
 optical PSF (Piff ``RomanOpticalModel.getProfile`` with the truth Zernikes) → dilate → shear →
-jitter convolution → MTF convolution → × flux → drawn with ``method='auto'`` (pixel applied
+Gaussian-kernel convolution → jitter convolution → MTF convolution → × flux → drawn with ``method='auto'`` (pixel applied
 once). Profiles are in world coordinates (arcsec), as returned by Piff/GalSim for the image WCS.
 """
 import numpy as np
@@ -101,6 +101,57 @@ def mtf_kernel(width_factor=1.0):
                        for w, r in zip(MTF_WEIGHTS, MTF_REL_SIGMAS)])
 
 
+def clip_to_psd(mxx, mxy, myy):
+    """Nearest positive semi-definite moment matrix (negative eigenvalues set to 0).
+
+    Parameters
+    ----------
+    mxx, mxy, myy : float
+        Second-moment matrix elements, any units.
+
+    Returns
+    -------
+    tuple of float
+        (mxx, mxy, myy) of the clipped matrix; unchanged if already PSD.
+    """
+    w, v = np.linalg.eigh(np.array([[mxx, mxy], [mxy, myy]], dtype=float))
+    if w[0] >= 0:
+        return float(mxx), float(mxy), float(myy)
+    m = v @ np.diag(np.clip(w, 0.0, None)) @ v.T
+    return float(m[0, 0]), float(m[0, 1]), float(m[1, 1])
+
+
+def gaussian_kernel(mxx, mxy, myy, pixel_scale=galsim.roman.pixel_scale):
+    """Unit-flux elliptical Gaussian with second-moment matrix M, in world coordinates.
+
+    M is given in native pix² along the world (u, v) axes and converted to arcsec² with
+    ``pixel_scale`` (not with the local WCS), so the same M means the same sky-plane kernel
+    with the simple and the Roman WCS.
+
+    Parameters
+    ----------
+    mxx, mxy, myy : float
+        Elements of M, native pix². M must be positive semi-definite (see `clip_to_psd`);
+        a zero eigenvalue gives a kernel that is a line (drawn as a very thin Gaussian).
+    pixel_scale : float
+        Arcsec per native pixel. Default ``galsim.roman.pixel_scale`` (0.11″).
+
+    Returns
+    -------
+    galsim.GSObject
+        The kernel, sizes in arcsec. Convolving a PSF with it adds M to the PSF's second
+        moments.
+    """
+    w, v = np.linalg.eigh(np.array([[mxx, mxy], [mxy, myy]], dtype=float) * pixel_scale**2)
+    if w[0] < -1e-12 * max(abs(w[1]), 1e-30):
+        raise ValueError(f"kernel moments ({mxx}, {mxy}, {myy}) are not positive semi-definite")
+    # A tiny floor keeps the transform invertible for a rank-1 (line) kernel; 1e-6 pix is far
+    # below anything a 0.11″ pixel can resolve.
+    floor = (1e-6 * pixel_scale) ** 2
+    a = v @ np.diag(np.sqrt(np.clip(w, floor, None)))
+    return galsim.Gaussian(sigma=1.0).transform(a[0, 0], a[0, 1], a[1, 0], a[1, 1]).withFlux(1.0)
+
+
 def random_walk_offsets(rms_mas, n_steps, rng):
     """Pointing offsets along a random-walk trajectory during an exposure.
 
@@ -173,13 +224,14 @@ def jitter_kernel(dx_mas, dy_mas, weights):
                        for x, y, w in zip(dx_mas, dy_mas, weights)])
 
 
-def apply_errors(optical, local_wcs, dilation=1.0, g1=0.0, g2=0.0, jitter=None,
+def apply_errors(optical, local_wcs, dilation=1.0, g1=0.0, g2=0.0, kernel=None, jitter=None,
                  mtf_width=None):
     """Apply the PSF error chain to an optical PSF.
 
-    Order: dilate → shear → jitter → MTF. Dilation and shear act on the optical PSF only;
-    jitter is a motion on the sky, so it is not dilated with the optics; the MTF is an
-    isotropic detector kernel defined in pixels.
+    Order: dilate → shear → Gaussian kernel → jitter → MTF. Dilation and shear act on the
+    optical PSF only; the kernel and jitter are convolutions fixed on the sky, so they are not
+    dilated with the optics (convolutions commute, so their order does not matter); the MTF is
+    an isotropic detector kernel defined in pixels.
 
     Parameters
     ----------
@@ -191,6 +243,8 @@ def apply_errors(optical, local_wcs, dilation=1.0, g1=0.0, g2=0.0, jitter=None,
         Size factor of the optical PSF (1 = no change).
     g1, g2 : float
         Reduced shear applied to the optical PSF (world u, v axes).
+    kernel : galsim.GSObject, optional
+        Gaussian kernel from `gaussian_kernel`. Default None (no kernel).
     jitter : galsim.GSObject, optional
         Jitter kernel from `jitter_kernel`. Default None (no jitter).
     mtf_width : float, optional
@@ -206,6 +260,8 @@ def apply_errors(optical, local_wcs, dilation=1.0, g1=0.0, g2=0.0, jitter=None,
         prof = prof.dilate(dilation)
     if g1 != 0.0 or g2 != 0.0:
         prof = prof.shear(g1=g1, g2=g2)
+    if kernel is not None:
+        prof = galsim.Convolve(prof, kernel)
     if jitter is not None:
         prof = galsim.Convolve(prof, jitter)
     if mtf_width is not None:

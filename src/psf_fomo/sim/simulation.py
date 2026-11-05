@@ -24,13 +24,14 @@ from astropy.table import Table, vstack
 from ..io import provenance, read_yaml, write_yaml
 from . import noise as noise_mod
 from . import plotting, storage
-from .psf import (apply_errors, jitter_kernel, linear_field, make_optical_model,
-                  optical_profile, random_walk_offsets, timeseries_offsets)
+from .psf import (apply_errors, clip_to_psd, gaussian_kernel, jitter_kernel, linear_field,
+                  make_optical_model, optical_profile, random_walk_offsets, timeseries_offsets)
 from .stars import draw_magnitudes, draw_positions, mag_to_flux, sub_pixel_phase
 from .wcs import DEFAULT_DEC, DEFAULT_RA, make_wcs, pointing_coord
 
 # Purposes of the independent random streams (part of the seed key; do not reorder).
-POSITIONS, MAGNITUDES, FIELD, SCATTER, NOISE, OBS_ERRORS, JITTER = range(7)
+POSITIONS, MAGNITUDES, FIELD, SCATTER, NOISE, OBS_ERRORS, JITTER, KERNEL = range(8)
+KERNEL_KEYS = ("mxx", "mxy", "myy")
 
 # Placeholder jitter amplitude for testing: GalSim's galsim.roman.jitter_rms, which GalSim
 # documents as a worst-case per-axis RMS for the design. Not a measured Roman value.
@@ -103,6 +104,7 @@ class RomanSimulation:
             "dilation": {"value": 1.0, "sigma_obs": 0.0, "sigma_field": 0.0},
             "shear": {"g1": 0.0, "g2": 0.0, "sigma_obs": 0.0, "sigma_field": 0.0},
             "mtf": {"scale": 1.0, "sigma_obs": 0.0, "sigma_field": 0.0},
+            "kernel": None,
             "aberration_scatter": 0.0,
             "jitter": None,
             "chromatic": None,
@@ -212,6 +214,47 @@ class RomanSimulation:
         """
         self.config["shear"] = {"g1": float(g1), "g2": float(g2),
                                 "sigma_obs": float(sigma_obs), "sigma_field": float(sigma_field)}
+
+    def add_kernel(self, mxx=0.0, mxy=0.0, myy=0.0, sigma_obs=0.0, sigma_field=0.0):
+        """Convolve the PSF with an elliptical Gaussian kernel of second moments M.
+
+        The kernel adds M to the PSF's second moments (before the pixel). It is fixed on the
+        sky: not dilated with the optics, applied after shear. ``add_kernel(None)`` turns
+        it off.
+
+        Parameters
+        ----------
+        mxx, mxy, myy : float or None
+            Elements of M in native pix² along the world (u, v) axes (× 0.11″² gives arcsec²).
+            M must be positive semi-definite (a kernel can only broaden). ``mxx=None``: no
+            kernel.
+        sigma_obs : float
+            Standard deviation (pix²) of a per-observation offset of each element. Default 0.
+        sigma_field : float
+            Scale (pix²) of a random linear field a + b x̂ + c ŷ of each element per
+            observation and SCA. Default 0.
+
+        Notes
+        -----
+        With variations, a star's M can leave the PSD cone; it is then clipped to the nearest
+        PSD matrix (negative eigenvalue set to 0). The catalog columns ``kernel_mxx`` …
+        record the M actually used.
+
+        Example
+        -------
+        >>> sim.add_kernel(0.022, 0.0, 0.022)   # like a 10 % wider MTF in second moments
+        """
+        if mxx is None:
+            self.config["kernel"] = None
+            return
+        mxx, mxy, myy = float(mxx), float(mxy), float(myy)
+        if mxx < 0 or myy < 0 or mxx * myy - mxy * mxy < 0:
+            raise ValueError("kernel moments must form a positive semi-definite matrix")
+        if sigma_obs < 0 or sigma_field < 0:
+            raise ValueError("sigma_obs and sigma_field must be >= 0")
+        self.config["kernel"] = {"mxx": mxx, "mxy": mxy, "myy": myy,
+                                 "sigma_obs": float(sigma_obs),
+                                 "sigma_field": float(sigma_field)}
 
     def set_mtf(self, scale=1.0, sigma_obs=0.0, sigma_field=0.0):
         """Set the charge-diffusion (MTF) kernel; ``set_mtf(None)`` turns it off.
@@ -422,8 +465,10 @@ class Simulation:
         One star table per observation. Columns: ``star_id``, ``obs``, ``sca``, ``x``, ``y``
         (native pixels, GalSim convention), ``phase_x``, ``phase_y``, ``u``, ``v`` (arcsec,
         simple WCS) or ``ra``, ``dec`` (deg, Roman WCS), ``mag`` (AB), ``flux`` (e⁻),
-        ``dilation``, ``g1``, ``g2``, ``mtf_scale`` (if MTF on), ``z4`` … (waves, value at the
-        star), ``sed_id`` (if chromatic), ``bkg_var`` (ADU², expected background variance).
+        ``dilation``, ``g1``, ``g2``, ``mtf_scale`` (if MTF on), ``kernel_mxx``,
+        ``kernel_mxy``, ``kernel_myy`` (native pix², if a Gaussian kernel is set), ``z4`` …
+        (waves, value at the star), ``sed_id`` (if chromatic), ``bkg_var`` (ADU², expected
+        background variance).
     noiseless : dict or None
         (obs, sca) → noiseless image in ADU, if requested.
     """
@@ -780,6 +825,11 @@ class _Truth:
         for k in range(self.nz):
             table[f"z{k + 4}"] = z_star[:, k]
             table[f"z{k + 4}"].description = "extra aberration at the star, waves"
+        kernel = self._kernel_moments(obs, sca, x, y)
+        if kernel is not None:
+            for key, values in zip(KERNEL_KEYS, kernel):
+                table[f"kernel_{key}"] = values
+                table[f"kernel_{key}"].description = "Gaussian-kernel moment, native pix2"
         if self.sed is not None:
             table["sed_id"] = np.zeros(n, dtype=int)
         for name, unit in [("x", "pix"), ("y", "pix"), ("phase_x", "pix"), ("phase_y", "pix"),
@@ -792,6 +842,21 @@ class _Truth:
         self._sca[obs, sca] = (table, params)
         return self._sca[obs, sca]
 
+    def _kernel_moments(self, obs, sca, x, y):
+        """Per-star Gaussian-kernel moments (mxx, mxy, myy) arrays, PSD-clipped, or None.
+
+        The kernel has its own random streams, so adding it leaves all other draws unchanged.
+        """
+        kern = self.config.get("kernel")  # absent in configs saved before it existed
+        if kern is None:
+            return None
+        offsets = self.rng(obs, 0, KERNEL).normal(0.0, kern["sigma_obs"], 3)
+        coeffs = self.rng(obs, sca, KERNEL).normal(0.0, kern["sigma_field"], (3, 3))
+        values = [kern[key] + off + linear_field(c, x, y)
+                  for key, off, c in zip(KERNEL_KEYS, offsets, coeffs)]
+        clipped = np.array([clip_to_psd(*m) for m in zip(*values)])
+        return clipped[:, 0], clipped[:, 1], clipped[:, 2]
+
     def profile(self, obs, sca, i):
         """Unit-flux truth PSF (no pixel) of star i of (obs, sca), world coordinates."""
         table, params = self.sca_truth(obs, sca)
@@ -801,9 +866,15 @@ class _Truth:
                                   self.pointing)
         dilation = float(row["dilation"])
         mtf_width = dilation * float(row["mtf_scale"]) if self.config["mtf"] else None
+        kernel = None
+        if "kernel_mxx" in table.colnames:
+            moments = [float(row[f"kernel_{key}"]) for key in KERNEL_KEYS]
+            if any(moments):
+                kernel = gaussian_kernel(*moments)
         return apply_errors(optical, self.wcs[sca].local(galsim.PositionD(x, y)),
                             dilation=dilation, g1=float(row["g1"]), g2=float(row["g2"]),
-                            jitter=self.obs_truth(obs)["jitter"], mtf_width=mtf_width)
+                            kernel=kernel, jitter=self.obs_truth(obs)["jitter"],
+                            mtf_width=mtf_width)
 
     def draw(self, prof, flux, image, center, method):
         """Draw a unit-flux truth profile with the given flux (e⁻) onto an image."""

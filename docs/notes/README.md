@@ -8,4 +8,5 @@
 | `galsim_roman.md` | `galsim.roman` getPSF, getWCS, bandpasses/zeropoints, detector/noise functions | **not started**. Needs a decision on reading installed sources vs docs (conflicts.md #19) |
 | `ngmix.md` | admom, gaussmom, conventions | **not started** (same) |
 | `moments_findings.md` | Phase 3 results: moment algorithms on native H158 stamps, calibration, open checks | Phase 3 (2026-11-03) |
+| `piffval_findings.md` | Phase 4 results: reference optimum vs prev_code, positive vs signed kernel by error type, overlapping-star trap, why the signed kernel has four Gaussians | Phase 4 (2026-11-04) |
 | `treecorr.md` | what ρ/τ need | **not started**. Piff's `RhoStats` usage is summarised in `piff.md` §6 |

@@ -106,6 +106,50 @@ def test_zernike_field_is_linear_in_position():
     np.testing.assert_allclose(table["z4"], table["z4"][0])
 
 
+def test_kernel_settings():
+    sim = RomanSimulation()
+    with pytest.raises(ValueError):
+        sim.add_kernel(0.01, 0.02, 0.01)  # not PSD
+    sim.add_kernel(0.02, 0.0, 0.01)
+    assert sim.config["kernel"]["myy"] == 0.01
+    sim.add_kernel(None)
+    assert sim.config["kernel"] is None
+
+
+def test_kernel_columns_and_variations():
+    sim = configured_sim()
+    sim.add_kernel(0.02, 0.001, 0.015, sigma_obs=0.002, sigma_field=0.001)
+    truth = _Truth(sim.config)
+    t0, t1 = truth.sca_truth(0, 1)[0], truth.sca_truth(1, 1)[0]
+    for key in ("mxx", "mxy", "myy"):
+        assert f"kernel_{key}" in t0.colnames
+    assert np.std(t0["kernel_mxx"]) > 0                    # field term
+    assert t0["kernel_mxx"].mean() != t1["kernel_mxx"].mean()  # per-observation offset
+    det = t0["kernel_mxx"] * t0["kernel_myy"] - t0["kernel_mxy"] ** 2
+    assert np.all(det >= -1e-15)
+    # Without variations the catalog holds exactly the configured M.
+    sim.add_kernel(0.02, 0.001, 0.015)
+    table = _Truth(sim.config).sca_truth(0, 1)[0]
+    np.testing.assert_array_equal(table["kernel_mxx"], 0.02)
+
+
+def test_kernel_keeps_other_draws():
+    base = configured_sim()
+    other = configured_sim()
+    other.add_kernel(0.02, 0.0, 0.02, sigma_obs=0.01, sigma_field=0.01)
+    t1 = _Truth(base.config).sca_truth(0, 1)[0]
+    t2 = _Truth(other.config).sca_truth(0, 1)[0]
+    for name in ("x", "mag", "dilation", "g1", "mtf_scale", "z5"):
+        np.testing.assert_array_equal(t1[name], t2[name])
+
+
+def test_config_without_kernel_key_still_works():
+    # Configurations saved before add_kernel existed have no "kernel" entry.
+    config = configured_sim().config
+    del config["kernel"]
+    assert "kernel_mxx" not in _Truth(config).sca_truth(0, 1)[0].colnames
+
+
 def test_changing_one_setting_keeps_other_draws():
     base = configured_sim()
     other = configured_sim()

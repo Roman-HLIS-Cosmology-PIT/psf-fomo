@@ -33,6 +33,7 @@ sim.to_yaml("run01.yaml"); RomanSimulation.from_yaml("run01.yaml").run()
 | `add_dilation(value, sigma_obs, sigma_field)` | size factor of the optical PSF | 1 |
 | `add_shear(g1, g2, sigma_obs, sigma_field)` | reduced shear of the optical PSF | 0 |
 | `set_mtf(scale, sigma_obs, sigma_field)` / `set_mtf(None)` | charge-diffusion kernel width | on, scale 1 |
+| `add_kernel(mxx, mxy, myy, sigma_obs, sigma_field)` / `add_kernel(None)` | Gaussian convolution kernel with second moments M, native pix², world axes, PSD only | off |
 | `add_aberration_scatter(sigma)` | per-star Zernike scatter, waves | 0 |
 | `add_jitter('random_walk', rms_mas, n_steps)` / `add_jitter('timeseries', t, dx_mas, dy_mas)` | pointing jitter | off |
 | `set_chromatic('flat' \| sed_file, wave_type, flux_type)` | one SED for all stars | achromatic |
@@ -41,7 +42,7 @@ sim.to_yaml("run01.yaml"); RomanSimulation.from_yaml("run01.yaml").run()
 | `set_psf_model(nominal_interp)` | Piff optical-model interpolation | `'bilinear'` |
 
 ### Variations of the errors
-Every error (Zernikes, dilation, shear, MTF scale) can vary:
+Every error (Zernikes, dilation, shear, MTF scale, kernel moments) can vary:
 - `sigma_obs`: a Gaussian offset drawn once per observation, shared by all SCAs.
 - `sigma_field`: a random linear field a + b x̂ + c ŷ per observation and SCA, with
   x̂ = x/4088, ŷ = y/4088 and a, b, c ~ N(0, `sigma_field`). For Zernikes this is Piff's
@@ -50,8 +51,18 @@ Every error (Zernikes, dilation, shear, MTF scale) can vary:
 ### Truth rendering chain
 optical PSF from Piff's `RomanOpticalModel.getProfile` with the truth Zernikes (galsim.roman
 PSFs at the SCA corners, interpolated across the SCA; `pupil_bin` = Piff's default 4) →
-dilate → shear → jitter → MTF (three Gaussians, widths × dilation × mtf_scale, defined in
-pixels) → × flux → `drawImage(method='auto')` (pixel response applied once) → noise.
+dilate → shear → Gaussian kernel → jitter → MTF (three Gaussians, widths × dilation ×
+mtf_scale, defined in pixels) → × flux → `drawImage(method='auto')` (pixel response applied
+once) → noise.
+
+### Gaussian kernel
+`add_kernel(mxx, mxy, myy)` convolves the PSF with an elliptical Gaussian whose second-moment
+matrix is M (native pix² along world u, v; × 0.11″² on the sky). It adds M to the pre-pixel
+second moments, is not dilated with the optics, and is the in-family truth for the
+`GaussianMoments` fit kernel. M must be positive semi-definite. With `sigma_obs` /
+`sigma_field` each element varies; a star whose M leaves the PSD cone is clipped to the nearest
+PSD matrix, and the catalog records the M actually used. The kernel has its own random streams,
+so adding it does not change any other draw.
 
 ### Jitter
 - `'random_walk'`: a new random walk per observation (`n_steps` samples), re-centred and
@@ -80,7 +91,7 @@ Fluxes: AB magnitude → e⁻ with the GalSim Roman AB zeropoint, collecting are
 Catalog columns: `star_id`, `obs`, `sca`, `x`, `y` (pix, GalSim convention: pixel centres at
 integers, SCA spans 1…4088), `phase_x`, `phase_y` (pix), `u`, `v` (arcsec; simple WCS) or
 `ra`, `dec` (deg; Roman WCS), `mag`, `flux` (e⁻), `dilation`, `g1`, `g2`, `mtf_scale`
-(if MTF on), `z4`… (waves, value at the star), `sed_id` (chromatic), `bkg_var` (ADU²).
+(if MTF on), `kernel_mxx`, `kernel_mxy`, `kernel_myy` (pix², if a kernel is set), `z4`… (waves, value at the star), `sed_id` (chromatic), `bkg_var` (ADU²).
 
 Saved folder:
 - `obs_NNN.fits`: HDUs 1… = SCAs in configured order (`EXTNAME` `SCA01`…), keywords `GAIN`,

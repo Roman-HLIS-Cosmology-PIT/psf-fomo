@@ -1,0 +1,165 @@
+"""Reference solver on synthetic stars (no getPSF), plus slow Roman closed loops."""
+import copy
+
+import numpy as np
+import galsim
+import galsim.roman
+import piff
+import pytest
+
+from psf_fomo.models import GaussianMoments  # noqa: F401  (registered)
+from psf_fomo.piffval import FitConfig, FitResult, PiffValidation, diagnostics
+from psf_fomo.piffval.run import make_logger
+from psf_fomo.reference import ReferenceSolver, comparison_table
+from psf_fomo.reference.solver import basis_matrix
+from psf_fomo.sim import RomanSimulation
+
+PIX = galsim.roman.pixel_scale
+KERNEL_M = (0.04, 0.01, 0.02)
+FIXED_BASE = {"type": "Simple",
+              "model": {"type": "GaussianMixture", "weights": [1.0], "sigmas": [0.12]},
+              "interp": {"type": "Fixed"}}
+
+
+def kernel_truth():
+    cov = np.array([[KERNEL_M[0], KERNEL_M[1]], [KERNEL_M[1], KERNEL_M[2]]]) * PIX**2
+    kernel = galsim.Gaussian(sigma=1.0).transform(*np.linalg.cholesky(cov).ravel()).withFlux(1)
+    return galsim.Convolve(galsim.Gaussian(sigma=0.12), kernel)
+
+
+def fit(config, stars):
+    psf = piff.PSF.process(copy.deepcopy(config))
+    psf.set_context({1: galsim.PixelScale(PIX)}, None, None)
+    psf.fit(stars, logger=make_logger(0)[0])
+    return psf
+
+
+def kernel_config(signed=False, **iterations):
+    return {"type": "Convolve", **iterations, "components": [
+        FIXED_BASE,
+        {"type": "Simple", "model": {"type": "GaussianMoments", "signed": signed},
+         "interp": {"type": "Polynomial", "order": 0}}]}
+
+
+def test_reference_finishes_an_early_stopped_fit(synthetic_stars):
+    # Noiseless stars with Piff's default chisq_thresh: Piff stops after min_iter with the
+    # kernel ~2.5e-3 pix² off (CLAUDE.md §9.4a). The joint optimum of the same model is the
+    # truth, from Piff's solution and from zero.
+    stars, rows = synthetic_stars(kernel_truth(), n=6)
+    for key, value in zip(("mxx", "mxy", "myy"), KERNEL_M):
+        rows[f"kernel_{key}"] = value  # truth columns, as a simulation catalog has them
+    psf = fit(kernel_config(), stars)
+    solver = ReferenceSolver(psf, psf.stars, rows)
+    out = solver.solve(starts=("given", "zero"), max_nfev=60)
+    # Piff's early-stopped solution is measurably off; the reference must improve on it.
+    piff_kernel = out["given"].components["kernel"]
+    assert np.max(np.abs(piff_kernel["dmxx"])) > 5e-4
+    given_chi2 = out["given"].summary["chisq"]
+    for start, res in out["optimum"].items():
+        assert res.summary["converged"], start
+        assert res.summary["chisq"] <= given_chi2
+        k = res.components["kernel"]
+        for key in ("dmxx", "dmxy", "dmyy"):
+            assert np.all(np.abs(k[key]) < 2e-4), (start, key)
+        np.testing.assert_allclose(res.table["flux_r"], 1.0, atol=1e-4)
+    # The Fixed base component is frozen; only the kernel's 3 coefficients are free.
+    assert solver.nfree == 3
+    assert [lf.frozen for lf in solver.leaves] == [True, False]
+    assert out["given"].summary["leaves"][1]["proj_err"] < 1e-10
+
+
+def test_reference_does_not_beat_a_converged_exact_fit(synthetic_stars):
+    stars, rows = synthetic_stars(galsim.Gaussian(sigma=0.15), n=6, flux=2e4, sigma=1.0)
+    psf = fit({"type": "Simple", "model": {"type": "Gaussian"}, "interp": {"type": "Mean"},
+               "chisq_thresh": 1e-6, "max_iter": 20}, stars)
+    solver = ReferenceSolver(psf, psf.stars, rows)
+    out = solver.solve()
+    given, best = out["given"].summary, out["optimum"]["given"].summary
+    assert best["chisq"] <= given["chisq"] + 1e-6
+    # Piff also fits centres, the reference holds them at truth: only a small difference.
+    assert given["chisq"] - best["chisq"] < 0.01 * given["dof"]
+    n_pix = sum(np.count_nonzero(s.weight.array) for s in stars)
+    assert given["dof"] == n_pix - 6 - 3
+    assert abs(best["chisq_dof"] - 1) < 0.1
+
+
+def test_reserve_stars_do_not_enter_chi2(synthetic_stars):
+    stars, rows = synthetic_stars(galsim.Gaussian(sigma=0.15), n=5, sigma=1.0)
+    stars[0].data.properties["is_reserve"] = True
+    psf = fit({"type": "Simple", "model": {"type": "Gaussian"}, "interp": {"type": "Mean"}},
+              stars)
+    solver = ReferenceSolver(psf, psf.stars, rows)
+    x = solver.x_start("given")
+    chi2 = solver.profiled(solver.images(x))[1]
+    solver.D[0] += 100.0  # spoil the reserve star's data
+    assert solver.profiled(solver.images(x))[1] == chi2
+    assert solver.dof == sum(np.count_nonzero(s.weight.array) for s in stars[1:]) - 4 - 3
+
+
+def test_basis_spans_piff_interpolation(synthetic_stars):
+    # Piff's BasisPolynomial (order 1) and Polynomial (order 1) solutions lie in our basis.
+    stars, rows = synthetic_stars(kernel_truth(), n=8, sigma=1.0)
+    config = {"type": "Sum", "max_iter": 3, "components": [
+        {"type": "Convolve", "components": [
+            FIXED_BASE,
+            {"type": "Simple", "model": {"type": "GaussianMoments", "signed": True},
+             "interp": {"type": "Polynomial", "order": 1}}]},
+        {"type": "Simple", "model": {"type": "PixelGrid", "size": 5, "scale": 0.11},
+         "interp": {"type": "BasisPolynomial", "order": 1}}]}
+    psf = fit(config, stars)
+    solver = ReferenceSolver(psf, psf.stars, rows)
+    kernel, grid = solver.leaves[1], solver.leaves[2]
+    assert kernel.K.shape == (8, 3) and grid.K.shape == (8, 3)
+    assert kernel.proj_err < 1e-8 and grid.proj_err < 1e-8
+    np.testing.assert_allclose(basis_matrix(grid.psf, psf.stars)[:, 0], 1.0)
+
+
+def test_linearity_detection_and_freeze(synthetic_stars):
+    stars, rows = synthetic_stars(kernel_truth(), n=5, sigma=1.0)
+    config = {"type": "Sum", "max_iter": 2, "components": [
+        kernel_config(),
+        {"type": "Simple", "model": {"type": "PixelGrid", "size": 5, "scale": 0.11},
+         "interp": {"type": "BasisPolynomial", "order": 0}}]}
+    psf = fit(config, stars)
+    solver = ReferenceSolver(psf, psf.stars, rows, freeze=("kernel",))
+    assert [lf.kind for lf in solver.free] == ["pixelgrid"]
+    solver.jacobian(solver.x_start("given"))
+    assert solver.free[0].linear  # a PixelGrid in a Sum (fit_flux) enters linearly
+    out = solver.solve(max_nfev=10)
+    np.testing.assert_allclose(out["optimum"]["given"].components["kernel"]["mxx"],
+                               out["given"].components["kernel"]["mxx"])
+
+
+def test_comparison_table(synthetic_stars):
+    stars, rows = synthetic_stars(kernel_truth(), n=6)
+    psf = fit(kernel_config(), stars)
+    out = ReferenceSolver(psf, psf.stars, rows).solve(max_nfev=20)
+    table = diagnostics.star_table(psf, psf.stars, rows)
+    piff_result = FitResult(psf, table, {"chisq_dof": 0.0, "converged": True}, {}, {})
+    t = comparison_table({"piff": piff_result, "piff, true centres": out["given"],
+                          "optimum": out["optimum"]["given"]})
+    assert list(t["label"]) == ["piff", "piff, true centres", "optimum"]
+    assert set(t.colnames) >= {"chisq_dof", "flux_r", "dT_T", "converged"}
+    assert np.isnan(t["dT_T"][0])  # no moments computed
+    assert t["converged"][0] == "True" and t["converged"][1] == ""
+
+
+@pytest.mark.slow
+def test_reference_from_config_in_family_kernel():
+    # Roman truth = optics ⊛ kernel M ⊛ MTF; same model, no Piff fit: the optimum is the truth.
+    s = RomanSimulation(n_stars=12, seed=5)
+    s.set_brightness(mag_range=(19.5, 20.5))
+    s.set_noise("gaussian", sigma=10.0)
+    s.add_kernel(*KERNEL_M)
+    cfg = FitConfig()
+    cfg.set_optics("pinned")
+    cfg.add_kernel("positive", order=0)
+    pv = PiffValidation(s.run(), cfg)
+    from psf_fomo.reference import reference_from_config
+    out = reference_from_config(pv, starts=("zero",), max_nfev=40)
+    best = out["optimum"]["zero"]
+    assert best.summary["converged"]
+    assert abs(best.summary["chisq_dof"] - 1) < 0.06
+    k = best.components["kernel"]
+    for key in ("dmxx", "dmxy", "dmyy"):
+        assert abs(k[key][0]) < 3e-3, key
