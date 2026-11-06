@@ -1,5 +1,7 @@
 """Per-component summaries of a fitted Piff PSF, compared with the simulation truth.
 
+With ``truth=False`` (real data) the tables hold the fitted values only.
+
 - optics (``RomanOptics``): fitted extra Zernikes at each star vs the catalog truth (waves).
 - kernel (``GaussianMoments`` or Piff ``Gaussian``): the kernel's second moments M at each
   star in native pix² (world axes) vs the truth kernel (catalog ``kernel_*``, 0 if none).
@@ -37,7 +39,7 @@ def kind_of(leaf):
             "GaussianMixture": "mtf"}.get(name, "other")
 
 
-def components(psf, stars, rows):
+def components(psf, stars, rows, truth=True):
     """Summary tables of the fitted components.
 
     Parameters
@@ -47,7 +49,12 @@ def components(psf, stars, rows):
     stars : list of piff.Star
         Fitted stars (interpolated parameters), same order as ``rows``.
     rows : astropy.table.Table
-        Simulation catalog rows of these stars (``x``, ``y``, ``z4`` …, ``kernel_*``).
+        Catalog rows of these stars: with ``truth``, simulation rows (``obs``, ``star_id``,
+        ``z4`` …, ``kernel_*``); otherwise any table whose ``obs`` / ``star_id`` columns (if
+        present) identify the stars.
+    truth : bool
+        Compare with the simulation truth (default True; a missing truth column means 0).
+        False: fitted values only (real data).
 
     Returns
     -------
@@ -65,22 +72,28 @@ def components(psf, stars, rows):
         key, i = kind, 2
         while key in out:
             key, i = f"{kind}_{i}", i + 1
-        out[key] = makers[kind](leaf, stars, rows)
+        out[key] = (makers[kind](leaf, stars, rows) if kind == "pixelgrid"
+                    else makers[kind](leaf, stars, rows, truth))
     return out
 
 
-def optics_table(leaf, stars, rows):
-    """Fitted vs true extra Zernikes, one row per fitted Noll index.
+def _id_columns(rows):
+    """The star-identifying columns (``obs``, ``star_id``) present in ``rows``."""
+    return Table({k: rows[k] for k in ("obs", "star_id") if k in rows.colnames})
+
+
+def optics_table(leaf, stars, rows, truth=True):
+    """Fitted (and true) extra Zernikes, one row per fitted Noll index.
 
     Columns: ``noll``, ``fit_mean``, ``fit_std`` (over stars; nonzero only with a linear
-    field or several SCAs), ``truth_mean``, ``diff_mean``, ``diff_std`` (fit − truth at each
-    star), ``fit_err`` (Piff's parameter σ, mean over stars), ``prior_sigma`` (NaN = none).
-    Waves.
+    field or several SCAs), with ``truth``: ``truth_mean``, ``diff_mean``, ``diff_std``
+    (fit − truth at each star); then ``fit_err`` (Piff's parameter σ, mean over stars),
+    ``prior_sigma`` (NaN = none). Waves.
     """
     model = leaf.model
     n = model._single_point_param_len
     fitted, errors = [], []
-    for star, row in zip(stars, rows):
+    for star in stars:
         p = np.asarray(star.fit.get_params(leaf._num), dtype=float)
         var = star.fit.get_params_var(leaf._num)
         var = np.full(p.size, np.nan) if var is None else np.asarray(var, dtype=float)
@@ -92,18 +105,20 @@ def optics_table(leaf, stars, rows):
         fitted.append(p)
         errors.append(np.sqrt(var))
     fitted, errors = np.array(fitted), np.array(errors)
-    truth = np.array([[float(row[f"z{k}"]) if f"z{k}" in rows.colnames else 0.0
-                       for k in range(4, 4 + n)] for row in rows])
+    out = Table({"noll": np.arange(4, 4 + n),
+                 "fit_mean": fitted.mean(axis=0), "fit_std": fitted.std(axis=0)})
+    if truth:
+        true = np.array([[float(row[f"z{k}"]) if f"z{k}" in rows.colnames else 0.0
+                          for k in range(4, 4 + n)] for row in rows])
+        diff = fitted - true
+        out["truth_mean"] = true.mean(axis=0)
+        out["diff_mean"] = diff.mean(axis=0)
+        out["diff_std"] = diff.std(axis=0)
     prior = model.orig_prior_sigma
-    diff = fitted - truth
-    return Table({
-        "noll": np.arange(4, 4 + n),
-        "fit_mean": fitted.mean(axis=0), "fit_std": fitted.std(axis=0),
-        "truth_mean": truth.mean(axis=0),
-        "diff_mean": diff.mean(axis=0), "diff_std": diff.std(axis=0),
-        "fit_err": np.nanmean(errors, axis=0),
-        "prior_sigma": np.full(n, np.nan) if prior is None else np.asarray(prior, dtype=float),
-    })
+    out["fit_err"] = np.nanmean(errors, axis=0)
+    out["prior_sigma"] = (np.full(n, np.nan) if prior is None
+                          else np.asarray(prior, dtype=float))
+    return out
 
 
 def kernel_moments(leaf, params):
@@ -124,11 +139,12 @@ def kernel_moments(leaf, params):
     return clipped, not np.allclose(clipped, params, rtol=0, atol=1e-12)
 
 
-def kernel_table(leaf, stars, rows):
-    """Kernel second moments at each star vs truth, native pix².
+def kernel_table(leaf, stars, rows, truth=True):
+    """Kernel second moments at each star (and vs truth), native pix².
 
-    Columns: ``obs``, ``star_id``, ``mxx``, ``mxy``, ``myy``, ``T`` (= mxx + myy),
-    ``clipped``, ``mxx_true`` …, ``T_true``, ``dmxx`` … (fit − truth), ``dT``.
+    Columns: ``obs``, ``star_id`` (when in ``rows``), ``mxx``, ``mxy``, ``myy``, with
+    ``truth``: ``mxx_true`` …, ``dmxx`` … (fit − truth); ``T`` (= mxx + myy), with
+    ``truth``: ``T_true``, ``dT``; ``clipped``.
     """
     fitted, clipped = [], []
     for star in stars:
@@ -136,16 +152,18 @@ def kernel_table(leaf, stars, rows):
         fitted.append(m)
         clipped.append(c)
     fitted = np.array(fitted)
-    out = Table({"obs": rows["obs"], "star_id": rows["star_id"]})
+    out = _id_columns(rows)
     for j, key in enumerate(("mxx", "mxy", "myy")):
-        true = (np.asarray(rows[f"kernel_{key}"], dtype=float)
-                if f"kernel_{key}" in rows.colnames else np.zeros(len(rows)))
         out[key] = fitted[:, j]
-        out[key + "_true"] = true
-        out["d" + key] = fitted[:, j] - true
+        if truth:
+            true = (np.asarray(rows[f"kernel_{key}"], dtype=float)
+                    if f"kernel_{key}" in rows.colnames else np.zeros(len(rows)))
+            out[key + "_true"] = true
+            out["d" + key] = fitted[:, j] - true
     out["T"] = out["mxx"] + out["myy"]
-    out["T_true"] = out["mxx_true"] + out["myy_true"]
-    out["dT"] = out["T"] - out["T_true"]
+    if truth:
+        out["T_true"] = out["mxx_true"] + out["myy_true"]
+        out["dT"] = out["T"] - out["T_true"]
     out["clipped"] = clipped
     return out
 
@@ -160,8 +178,10 @@ def pixelgrid_table(leaf, stars, rows):
         prof, _ = leaf._getRawProfile(star)
         flux.append(float(prof.flux))
         peak.append(float(np.max(np.abs(star.fit.get_params(leaf._num)))))
-    return Table({"obs": rows["obs"], "star_id": rows["star_id"], "grid_flux": flux,
-                  "grid_max": peak})
+    out = _id_columns(rows)
+    out["grid_flux"] = flux
+    out["grid_max"] = peak
+    return out
 
 
 def component_image(psf, leaf, x, y, sca, oversample=5, size=25):
@@ -186,21 +206,26 @@ def component_image(psf, leaf, x, y, sca, oversample=5, size=25):
     -------
     galsim.Image
         Drawn without adding a pixel (a PixelGrid already contains it; optics / kernel /
-        MTF are shown pre-pixel).
+        MTF are shown pre-pixel), except Piff's GaussianBlur, which is integrated over each
+        fine pixel: near zero blur it is a near-delta that point sampling cannot represent.
     """
     wcs = psf.wcs[sca]
     target = piff.Star.makeTarget(x=x, y=y, wcs=wcs, pointing=psf.pointing,
                                   properties={"sca": sca, "chipnum": sca})
     target = psf.interpolateStar(target)
+    method = "no_pixel"
     if leaf.model._type_name == "GaussianBlur":
         # GaussianBlur exists only in k-space; near zero blur its maxk is unbounded, so a
-        # pre-pixel drawing would need a huge FFT. Draw the same Gaussian in real space.
+        # pre-pixel drawing would need a huge FFT. Draw the same Gaussian in real space, and
+        # integrate it over each fine pixel: at zero blur it is a near-delta (σ floored at
+        # 1e-6 pix), which point sampling at pixel centres turns into one enormous value.
         m, _ = kernel_moments(leaf, target.fit.get_params(leaf._num))
         prof = gaussian_kernel(*m)
+        method = "auto"
     else:
         prof, _ = leaf._getRawProfile(target)
     local = wcs.local(galsim.PositionD(x, y))
     fine = galsim.JacobianWCS(*(local.jacobian().getMatrix().ravel() / oversample))
     image = galsim.ImageD(size * oversample, size * oversample, wcs=fine)
-    prof.drawImage(image=image, method="no_pixel")
+    prof.drawImage(image=image, method=method)
     return image

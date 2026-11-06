@@ -134,7 +134,7 @@ def require_ngmix():
                           "pip install -e \".[moments]\" (or install ngmix)") from err
 
 
-def make_star(image, image_pos, weight=None):
+def make_star(image, image_pos, weight=None, pointing=None):
     """Wrap a galsim Image (e.g. a noiseless or oversampled stamp) in a piff.Star.
 
     Parameters
@@ -146,6 +146,10 @@ def make_star(image, image_pos, weight=None):
         centroids are reported relative to it.
     weight : galsim.Image or float, optional
         Inverse-variance weight image, or a constant. Default 1 everywhere.
+    pointing : galsim.CelestialCoord, optional
+        Piff needs a pointing for a celestial WCS (e.g. a real image's TAN-SIP). Default: the
+        star's own sky position. The moments use only the local WCS, so any nearby pointing
+        gives the same measurement.
 
     Returns
     -------
@@ -154,4 +158,6 @@ def make_star(image, image_pos, weight=None):
     if weight is None or np.isscalar(weight):
         weight = galsim.ImageF(image.bounds, wcs=image.wcs,
                                init_value=1.0 if weight is None else float(weight))
-    return piff.Star(piff.StarData(image, image_pos, weight=weight), None)
+    if pointing is None and image.wcs is not None and image.wcs.isCelestial():
+        pointing = image.wcs.toWorld(image_pos)
+    return piff.Star(piff.StarData(image, image_pos, weight=weight, pointing=pointing), None)

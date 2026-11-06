@@ -122,9 +122,11 @@ def plot_moment_residuals(result, comparison="truth_os", algorithms=None, bins=2
     result : FitResult
         Needs ``result.moments``.
     comparison : {'data', 'truth_native', 'truth_os'}
+        (``'model_os'`` has no reference; use `plot_field` with ``'T_model'`` etc.)
     algorithms : str or sequence of str, optional
         Algorithm labels (e.g. ``'wmom_0.4'``). Default all measured for this comparison.
     """
+    ref_name = _ref_name(comparison)
     m = result.moments
     m = m[(m["comparison"] == comparison) & (m["flag"] == 0)]
     algs = list(dict.fromkeys(m["algorithm"])) if algorithms is None else list(
@@ -141,7 +143,7 @@ def plot_moment_residuals(result, comparison="truth_os", algorithms=None, bins=2
                     ax.hist(v, bins=edges, histtype="step",
                             label=f"{label}: {np.nanmean(v):+.2e} ± {np.nanstd(v):.1e}")
             ax.axvline(0, color="gray", lw=0.8)
-            ax.set_xlabel(f"{LABELS[q]} (model − {_ref_name(comparison)})")
+            ax.set_xlabel(f"{LABELS[q]} (model − {ref_name})")
             ax.set_title(alg)
             ax.legend(fontsize=8)
     fig.tight_layout()
@@ -218,14 +220,15 @@ def plot_components(result, kind="pixelgrid", n_grid=3, oversample=5, size=9):
 
 
 def plot_zernikes(result, ax=None):
-    """Fitted extra Zernikes (mean ± Piff σ) and truth, waves."""
+    """Fitted extra Zernikes (mean ± Piff σ) and, for simulations, the truth; waves."""
     table = result.components()["optics"]
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 3.8))
     ax.errorbar(table["noll"], table["fit_mean"], yerr=table["fit_err"], ls="none",
                 marker="o", capsize=3, label="fit")
-    ax.plot(table["noll"], table["truth_mean"], ls="none", marker="x", color="k",
-            label="truth")
+    if "truth_mean" in table.colnames:
+        ax.plot(table["noll"], table["truth_mean"], ls="none", marker="x", color="k",
+                label="truth")
     ax.axhline(0, color="gray", lw=0.8)
     ax.set_xlabel("Noll index")
     ax.set_ylabel("extra aberration [waves]")
@@ -259,4 +262,7 @@ def plot_rho(rho_table):
 
 
 def _ref_name(comparison):
+    if comparison == "model_os":
+        raise ValueError("'model_os' has no reference: plot its *_model columns with "
+                         "plot_field, e.g. plot_field(res, 'T_model', 'model_os', 'hsm')")
     return "data" if comparison == "data" else "truth"

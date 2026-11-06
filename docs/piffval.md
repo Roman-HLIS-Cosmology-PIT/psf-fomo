@@ -103,12 +103,36 @@ e, world axes).
 | `data` | noisy data stamp | model at the fitted flux and centre, same stamp; both measured about the catalog position (as wmom needs) |
 | `truth_native` | noiseless truth stamp (`render_stamp`) | model at the true position and flux; isolates model error from noise |
 | `truth_os` | oversampled truth (`truth_psf`, effective PSF) | model on the same fine grid: `'auto'` profiles convolved with the native pixel once, `'no_pixel'` ones (PixelGrid) as they are |
+| `model_os` (opt-in) | none (`*_ref` and residuals NaN) | the model alone on the oversampled grid, same convention as `truth_os`; needs no truth |
+
+`model_os` is not in the default set: add it with
+`set_diagnostics(comparisons=("data", "truth_native", "truth_os", "model_os"))`. It is measured
+with the `oversampled` algorithms. Plot it with `plot_field(res, "T_model", "model_os", "hsm")`.
+
+### Model moments anywhere, and model − model comparisons
+- `res.model_moments(n_grid=5, x=None, y=None, algorithms=("hsm",), wmom_fwhm=(0.4,),
+  oversample=5, include_pixel=True, size=25)`: oversampled model moments at given SCA positions
+  (native pixels) or at the centres of an `n_grid` × `n_grid` grid of cells; one row per
+  position × algorithm (`x`, `y`, `algorithm`, T, e1, e2, g1, g2, sigma, du, dv, flux, `flag`).
+  No simulation needed.
+- `compare_fits({"PG": res1, "signed+PG": res2, ...}, x=None, y=None, algorithms=("hsm",))`
+  (`psf_fomo.piffval.compare_fits`): the same for several fits of one SCA, at the first fit's
+  unflagged stars by default, with `dT_T`, `de1`, `de2` relative to the first fit. Works for
+  simulation and real-data results alike.
 
 Columns: star identifiers, `reserve`, `comparison`, `algorithm`, `<key>_ref` / `<key>_model`
 for T, e1, e2, g1, g2, sigma, du, dv, flux; `dT_T = (T_model − T_ref)/T_ref`, `de1`, `de2`;
 `flag_ref`, `flag_model`, `flag` (OR of both, + 16 if Piff flagged the star). Summaries use
 `flag == 0` and report `n_flagged`. The raw `*_ref` / `*_model` moments are kept so that
 calibrations (e.g. wmom scaled by gauss) can be done from the table.
+
+## Shared with real-data fits
+`psf_fomo.piffval.fitting` holds the truth-free pieces of a fit (logger and convergence
+watch, `piff_shape_method`, `choose_reserve`, `fit_columns` = per-star flux / centre / χ²,
+`fit_summary`); `residuals` the truth-free moments (`'data'`, `'model_os'`, `model_moments`,
+`compare_fits`); `components(..., truth=False)` gives fitted values without truth columns.
+The real-data package `psf_fomo.datafit` uses these and `FitConfig`; nothing in it depends on
+`PiffValidation`.
 
 ## Components (`res.components()`)
 - `optics`: per Noll index, fitted extra Zernike at the stars vs catalog truth (waves): mean,
@@ -167,8 +191,13 @@ comparison_table({"Piff": res, "Piff, true centres": out["given"],
   polynomials with the interpolator's own terms (`Polynomial`, `BasisPolynomial`; `Mean` =
   constant). Frozen: `Fixed` components, pinned optics, and kinds listed in `freeze`
   (`'optics'`, `'kernel'`, `'pixelgrid'`).
-- Fluxes profiled in closed form, centres held at the truth: the reference χ² is an upper
-  bound on the true optimum of Piff's problem. A centred PixelGrid is optimised over the full
+- Fluxes profiled in closed form, centres held at the truth (`ReferenceSolver(...,
+  centers="catalog")`, default; `centers="fitted"` holds Piff's fitted centres instead, the
+  default for real data, `docs/datafit.md`): the reference χ² is an upper bound on the true
+  optimum of Piff's problem.
+- `comparison_table` columns: `label`, `chisq`, `chisq_dof`, `flux_r`, `flux_tot_r` (NaN for
+  real data), `flux_cat_r` (when a real-data result is included), moment residuals of the
+  chosen comparison and algorithm, `n_moments`, `converged`. A centred PixelGrid is optimised over the full
   grid. Only fit stars (not reserve, not flagged) enter χ²; reserve stars are evaluated too.
 - dof = weighted pixels of fit stars − fit stars − free coefficients (Piff: pixels − 3 per
   star). Compare Piff with the optimum through `out["given"]` (Piff's parameters with true

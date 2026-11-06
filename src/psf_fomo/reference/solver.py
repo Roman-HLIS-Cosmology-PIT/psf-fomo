@@ -19,9 +19,14 @@ Parameterisation (one block per leaf component):
 
 Simplifications:
 
-- Star centres are held at the truth (the catalog position: offset 0) and fluxes are profiled
-  in closed form at every evaluation (variable projection). Piff also fits centres, so the
-  reference χ² is an upper bound on the true optimum of Piff's problem.
+- Star centres are held fixed and fluxes are profiled in closed form at every evaluation
+  (variable projection). Centres: ``'catalog'`` (default; offset 0 = the truth for a
+  simulation) or ``'fitted'`` (Piff's fitted centres; for real data, which has no truth).
+  Piff also fits centres, so the reference χ² is an upper bound on the true optimum of Piff's
+  problem.
+- The star table, components and moments of a solution come from `star_table`,
+  `components` and `moment_table`: simulation versions here; real-data fits use the subclass
+  `psf_fomo.datafit.reference.DataReferenceSolver`.
 - A centred PixelGrid is optimised over the full grid (Piff restricts it to zero centroid and
   fits the star centre instead); constraints inside a model's ``fit`` are not imposed.
 - Only fit stars (not reserve, not flagged) enter χ²; reserve stars are evaluated at the
@@ -141,6 +146,9 @@ class ReferenceSolver:
     freeze : sequence of str, optional
         Component kinds to hold at their given values (``'optics'``, ``'kernel'``,
         ``'pixelgrid'``). Fixed components and pinned optics are always frozen.
+    centers : {'catalog', 'fitted'}
+        Star centres held during the optimisation: the catalog position (default; the truth
+        in a simulation) or the stars' given (Piff-fitted) centres.
 
     Example
     -------
@@ -149,18 +157,22 @@ class ReferenceSolver:
     >>> comparison_table({"piff": out["given"], **out["optimum"]})
     """
 
-    def __init__(self, psf, stars, rows, sim=None, freeze=()):
+    def __init__(self, psf, stars, rows, sim=None, freeze=(), centers="catalog"):
         if len(stars) != len(rows):
             raise ValueError("stars and rows have different lengths")
+        if centers not in ("catalog", "fitted"):
+            raise ValueError("centers must be 'catalog' or 'fitted'")
         self.psf = psf
         self.stars = list(stars)
         self.rows = rows
         self.sim = sim
+        self.centers = centers
         self.leaves = [Leaf(leaf, self.stars, kind_of(leaf) in freeze)
                        for leaf in leaf_psfs(psf)]
         self.free = [lf for lf in self.leaves if not lf.frozen]
-        # Unit flux, true centre (catalog position), the given parameter structure.
-        self.base_fits = [s.fit.withNew(flux=1.0, center=(0.0, 0.0)) for s in self.stars]
+        # Unit flux, the held centre, the given parameter structure.
+        self.base_fits = [s.fit.withNew(flux=1.0, center=(0.0, 0.0) if centers == "catalog"
+                                        else tuple(s.fit.center)) for s in self.stars]
         self.D = np.array([s.image.array.ravel() for s in self.stars], dtype=float)
         self.W = np.array([s.weight.array.ravel() for s in self.stars], dtype=float)
         self.use = np.array([not s.is_reserve and not s.is_flagged for s in self.stars])
@@ -348,8 +360,8 @@ class ReferenceSolver:
         label : str
             Name stored in the summary.
         moments : dict, optional
-            Keyword arguments of `psf_fomo.piffval.residuals.moment_residuals` (needs
-            ``sim``). Default None = no moment residuals.
+            Keyword arguments of `psf_fomo.piffval.residuals.moment_residuals` (see
+            `moment_table`). Default None = no moment residuals.
         info : dict, optional
             Extra entries for the summary (e.g. optimiser status).
 
@@ -369,19 +381,29 @@ class ReferenceSolver:
             c2 = float(np.sum(self.W[i] * (self.D[i] - F[i] * m[i]) ** 2))
             final.append(piff.Star(s.data, s.fit.withNew(flux=float(F[i]), chisq=c2,
                                                          dof=int(npix[i]) - 1)))
-        table = diagnostics.star_table(self.psf, final, self.rows)
+        table = self.star_table(final)
         summary = {"label": label, "chisq": chi2, "dof": self.dof,
                    "chisq_dof": chi2 / self.dof if self.dof > 0 else float("nan"),
                    "n_free": self.nfree, "n_fit_stars": int(self.use.sum()),
+                   "centers": self.centers,
                    "leaves": [leaf_summary(lf) for lf in self.leaves]}
         summary.update(info or {})
-        moment_table = None
-        if moments is not None:
-            if self.sim is None:
-                raise ValueError("moment residuals need the simulation (sim=...)")
-            moment_table = moment_residuals(self.psf, final, table, self.sim, **moments)
-        comps = component_tables(self.psf, final, self.rows)
-        return ReferenceResult(final, table, summary, moment_table, comps)
+        moment_table = None if moments is None else self.moment_table(final, table, moments)
+        return ReferenceResult(final, table, summary, moment_table, self.components(final))
+
+    def star_table(self, stars):
+        """Star table of a solution (simulation: `piffval.diagnostics.star_table`)."""
+        return diagnostics.star_table(self.psf, stars, self.rows)
+
+    def components(self, stars):
+        """Component summaries of a solution, compared with the simulation truth."""
+        return component_tables(self.psf, stars, self.rows)
+
+    def moment_table(self, stars, table, settings):
+        """Moment residuals of a solution (`moment_residuals` with the simulation)."""
+        if self.sim is None:
+            raise ValueError("moment residuals need the simulation (sim=...)")
+        return moment_residuals(self.psf, stars, table, self.sim, **settings)
 
     def solve(self, starts=("given",), max_nfev=50, moments=None):
         """Joint optimum from one or more starting points.
@@ -439,9 +461,10 @@ class ReferenceResult:
     Attributes
     ----------
     stars : list of piff.Star
-        Stars with the solution's parameters, profiled flux, centre 0.
+        Stars with the solution's parameters, profiled flux, the held centre.
     table : astropy.table.Table
-        As `FitResult.table` (``du = dv = 0``; ``dof`` = pixels − 1 per star).
+        As `FitResult.table` (``du = dv = 0`` with catalog centres; ``dof`` = pixels − 1
+        per star), or the real-data star table for `DataReferenceSolver`.
     summary : dict
         χ², reference dof, ``chisq_dof``, ``n_free``, per-leaf info, optimiser status.
     moments : astropy.table.Table or None
@@ -508,31 +531,37 @@ def comparison_table(results, comparison="truth_os", algorithm="hsm"):
     Parameters
     ----------
     results : dict
-        Label → `ReferenceResult` or `FitResult` (a FitResult row uses Piff's own χ² and
-        dof; ReferenceResults use the reference dof, so compare Piff with the reference via
-        the ``'given'`` solution of `ReferenceSolver.solve`).
+        Label → `ReferenceResult`, `FitResult` or `DataFitResult` (a fit's row uses Piff's
+        own χ² and dof; ReferenceResults use the reference dof, so compare Piff with the
+        reference via the ``'given'`` solution of `ReferenceSolver.solve`).
     comparison, algorithm : str
-        Which moment residuals to summarise (if present).
+        Which moment residuals to summarise (if present). For real data use
+        ``comparison='data'`` (e.g. with ``algorithm='gauss'``).
 
     Returns
     -------
     astropy.table.Table
-        Columns ``label``, ``chisq_dof``, ``flux_r``, ``flux_tot_r``, ``dT_T``, ``dT_T_std``,
-        ``de1``, ``de1_std``, ``de2``, ``de2_std``, ``n_moments`` (unflagged fit stars),
-        ``converged``.
+        Columns ``label``, ``chisq``, ``chisq_dof``, ``flux_r``, ``flux_tot_r`` (NaN without
+        truth), ``flux_cat_r`` (only when a result has it), ``dT_T``, ``dT_T_std``, ``de1``,
+        ``de1_std``, ``de2``, ``de2_std``, ``n_moments`` (unflagged fit stars), ``converged``.
     """
     from astropy.table import Table
 
+    flux_cols = ["flux_r", "flux_tot_r"]
+    if any("flux_cat_r" in res.table.colnames for res in results.values()):
+        flux_cols.append("flux_cat_r")
     out = []
     for label, res in results.items():
         summary = getattr(res, "summary", None)
         summary = summary if isinstance(summary, dict) else res.fit_summary
         t = res.table
         fit = t[(~t["reserve"]) & (t["flag"] == 0)]
-        row = {"label": label, "chisq_dof": summary["chisq_dof"],
-               "flux_r": float(np.mean(fit["flux_r"])),
-               "flux_tot_r": float(np.mean(fit["flux_tot_r"])),
-               "converged": summary.get("converged", None)}
+        row = {"label": label, "chisq": summary.get("chisq", np.nan),
+               "chisq_dof": summary["chisq_dof"]}
+        for name in flux_cols:
+            row[name] = (float(np.nanmean(fit[name])) if name in fit.colnames and len(fit)
+                         else np.nan)
+        row["converged"] = summary.get("converged", None)
         m = res.moments
         if m is not None:
             m = m[(m["comparison"] == comparison) & (m["algorithm"] == algorithm)

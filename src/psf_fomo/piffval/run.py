@@ -16,10 +16,7 @@ Example
 >>> res.fit_summary["chisq_dof"], res.summary(), res.moment_summary()
 """
 import copy
-import logging
-import sys
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -36,9 +33,10 @@ from ..sim import storage
 from . import components as components_mod
 from . import diagnostics, plotting
 from .config import FitConfig
-from .residuals import COMPARISONS, moment_residuals, moment_summary
-
-NOT_CONVERGED = "PSF fit did not converge"  # Piff's warning when max_iter is reached
+# Shared with real-data fits; imported here so `psf_fomo.piffval.run.<name>` keeps working.
+from .fitting import NOT_CONVERGED, choose_reserve, make_logger, piff_shape_method  # noqa: F401
+from .residuals import (COMPARISONS, MODEL_OS_SIZE, model_moments, moment_residuals,
+                        moment_summary, sca_grid)
 
 DEFAULT_DIAGNOSTICS = {"moments": True, "native": ["wmom", "gauss"],
                        "wmom_fwhm": [DEFAULT_WMOM_FWHM], "oversampled": ["hsm"],
@@ -126,7 +124,8 @@ class PiffValidation:
         include_pixel : bool
             Oversampled images are the pixel-convolved effective PSF. Default True.
         comparisons : sequence of str
-            Subset of ``('data', 'truth_native', 'truth_os')``. Default all.
+            Subset of ``('data', 'truth_native', 'truth_os', 'model_os')``. Default the
+            first three; ``'model_os'`` (the model alone, oversampled) is opt-in.
 
         See `psf_fomo.piffval.residuals` for the definitions.
         """
@@ -400,6 +399,19 @@ class FitResult:
         self.moments = moment_residuals(self.psf, stars, self.table, self.sim, **settings)
         return self.moments
 
+    def model_moments(self, n_grid=5, x=None, y=None, algorithms=("hsm",),
+                      wmom_fwhm=(DEFAULT_WMOM_FWHM,), oversample=5, include_pixel=True,
+                      size=MODEL_OS_SIZE):
+        """Oversampled model moments across the SCA (see `residuals.model_moments`).
+
+        Positions: ``x``, ``y`` (native pixels) if given, else the centres of an
+        ``n_grid`` × ``n_grid`` grid of cells covering the SCA. Needs no simulation.
+        """
+        if x is None or y is None:
+            x, y = sca_grid(n_grid)
+        return model_moments(self.psf, x, y, self.config["sca"], algorithms, wmom_fwhm,
+                             oversample, include_pixel, size)
+
     def moment_summary(self, columns=("dT_T", "de1", "de2")):
         """Mean, std, error on the mean, n, n_flagged per (set, comparison, algorithm)."""
         if self.moments is None:
@@ -517,60 +529,3 @@ def simulation_stars(sim, sca, obs, frac=0.0, seed=0):
     for star, flag in zip(stars, choose_reserve(len(stars), frac, seed)):
         star.data.properties["is_reserve"] = bool(flag)
     return stars, rows
-
-
-def choose_reserve(n, frac=0.0, seed=0):
-    """Boolean mask of reserve stars: ``int(frac × n)`` chosen at random (Piff's rule)."""
-    mask = np.zeros(n, dtype=bool)
-    n_reserve = int(frac * n)
-    if n_reserve:
-        mask[np.random.default_rng(seed).choice(n, n_reserve, replace=False)] = True
-    return mask
-
-
-@contextmanager
-def piff_shape_method(method="hsm", weight_fwhm=None):
-    """Set Piff's global shape method inside a ``with`` block; the previous one is restored.
-
-    Parameters
-    ----------
-    method : {'hsm', 'gauss', 'am', 'wmom'}
-        Method used by Piff while the block runs.
-    weight_fwhm : float, optional
-        Weight FWHM in arcsec (``wmom`` only).
-    """
-    old = (piff.star.get_shape_method(), piff.star.get_shape_weight_fwhm())
-    piff.set_shape_method(method, weight_fwhm)
-    try:
-        yield
-    finally:
-        piff.set_shape_method(*old)
-
-
-class _ConvergenceWatch(logging.Handler):
-    """Notices Piff's "did not converge" warning (Piff has no convergence attribute)."""
-
-    def __init__(self):
-        super().__init__(level=logging.WARNING)
-        self.triggered = False
-
-    def emit(self, record):
-        if record.getMessage().startswith(NOT_CONVERGED):
-            self.triggered = True
-
-
-def make_logger(verbose=0):
-    """A Piff logger printing at the given verbosity, plus a convergence watcher.
-
-    The logger always passes warnings to the watcher, even when only errors are printed.
-    """
-    levels = {0: logging.ERROR, 1: logging.INFO, 2: piff.config.VERBOSE, 3: logging.DEBUG}
-    logger = piff.config.PiffLogger("psf_fomo.piffval")  # not registered: a fresh logger
-    stream = logging.StreamHandler(sys.stdout)
-    stream.setLevel(levels[verbose])
-    stream.setFormatter(logging.Formatter("%(message)s"))
-    watch = _ConvergenceWatch()
-    logger.addHandler(stream)
-    logger.addHandler(watch)
-    logger.setLevel(min(levels[verbose], logging.WARNING))
-    return logger, watch
