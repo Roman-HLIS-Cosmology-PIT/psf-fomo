@@ -47,6 +47,12 @@ MOMENT_KEYS = ("T", "e1", "e2", "g1", "g2", "sigma", "du", "dv", "flux")
 BASE_COLUMNS = ("obs", "sca", "star_id", "x", "y", "phase_x", "phase_y", "mag", "reserve")
 MODEL_OS_SIZE = 25  # native pixels of the model_moments grid when there is no stamp
 NO_REFERENCE = {**{key: np.nan for key in MOMENT_KEYS}, "flag": 0}
+NOT_DRAWN = {**{key: np.nan for key in MOMENT_KEYS}, "flag": 8}   # measurement flag "exception"
+
+
+def drawable(star):
+    """False for a star Piff left with a non-finite flux or centre (it cannot be drawn)."""
+    return bool(np.isfinite(star.fit.flux) and np.all(np.isfinite(star.fit.center)))
 
 
 def moment_residuals(psf, stars, table, sim=None, native=("wmom", "gauss"),
@@ -109,6 +115,14 @@ def moment_residuals(psf, stars, table, sim=None, native=("wmom", "gauss"),
     for star, row in zip(stars, table):
         base = {k: row[k] for k in base_columns}
         piff_flag = FLAG_PIFF if row["flag"] else 0
+        if not drawable(star):
+            # Piff excluded the star with a non-finite flux or centre: nothing to draw.
+            for comparison in comparisons:
+                algs = native_algs if comparison in ("data", "truth_native") else os_algs
+                for alg, fwhm in algs:
+                    rows.append(_row(base, comparison, algorithm_label(alg, fwhm),
+                                     NO_REFERENCE, NOT_DRAWN, piff_flag))
+            continue
         for comparison, (ref, model) in _image_pairs(psf, star, row, sim, comparisons,
                                                      oversample, include_pixel):
             algs = native_algs if comparison in ("data", "truth_native") else os_algs

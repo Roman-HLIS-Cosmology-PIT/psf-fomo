@@ -180,10 +180,13 @@ class L2Image:
         return x, y
 
     def write_fit_copy(self, path):
-        """Write this file flipped into GalSim's frame; the original is not changed.
+        """Write the file Piff fits: flipped into GalSim's frame, non-finite pixels cleaned.
 
         Every 2-d plane of the image's shape is flipped along `flip`, and every header with a
-        WCS is transformed with `flip_wcs_header`. Other HDUs are copied as they are.
+        WCS is transformed with `flip_wcs_header`. Pixels whose image or weight is not finite
+        (`nonfinite`) get image 0, weight 0 and mask 1: they had (or should have had) zero
+        weight anyway, but a NaN would still poison Piff's sums (see `check_finite`). Other
+        planes and HDUs are copied as they are. The original file is not changed.
 
         Parameters
         ----------
@@ -193,12 +196,14 @@ class L2Image:
         Returns
         -------
         Path
-            ``path``, or this file's own path when no flip is needed (``frame='galsim'``).
+            ``path``, or this file's own path when neither a flip nor a clean-up is needed.
         """
-        if self.flip is None:
+        bad = self.nonfinite()
+        if self.flip is None and not bad.any():
             return self.path
         path = Path(path)
         numpy_axis = 1 if self.flip == "x" else 0   # arrays are indexed [y, x]
+        cleaned = {self.hdus["image"]: 0, self.hdus["ivar"]: 0, self.hdus["mask"]: 1}
         with fits.open(self.path) as hdul:
             out = []
             for i, hdu in enumerate(hdul):
@@ -210,11 +215,15 @@ class L2Image:
                 # own when writing (keeping BZERO / BSCALE would scale twice).
                 for key in ("BZERO", "BSCALE"):
                     header.remove(key, ignore_missing=True)
-                if "CTYPE1" in header:
+                if "CTYPE1" in header and self.flip is not None:
                     header = flip_wcs_header(header, self.flip, self.shape)
                 data = hdu.data
                 if data is not None and data.ndim == 2 and data.shape == self.shape:
-                    data = np.ascontiguousarray(np.flip(data, axis=numpy_axis))
+                    if i in cleaned and bad.any():
+                        data = np.array(data)          # a writable copy
+                        data[bad] = cleaned[i]
+                    if self.flip is not None:
+                        data = np.ascontiguousarray(np.flip(data, axis=numpy_axis))
                 if i == 0:
                     out.append(fits.PrimaryHDU(data=data, header=header))
                 else:  # compressed planes are written uncompressed
@@ -423,18 +432,30 @@ class L2Image:
         """
         return compare_frames(self.wcs, self.sca, self.shape, pointing, date)
 
-    def check_finite(self):
-        """Number of unmasked pixels whose image or weight is not finite (should be 0).
+    def nonfinite(self):
+        """Boolean map (file frame) of pixels whose image or weight is not finite."""
+        return ~(np.isfinite(self.array("image")) & np.isfinite(self.array("ivar")))
 
-        Piff gives masked pixels zero weight, but a NaN in an unmasked pixel spoils χ².
-        Warns when the count is nonzero.
+    def check_finite(self):
+        """Count pixels whose image or weight is not finite.
+
+        Piff gives masked pixels zero weight, but its sums still multiply weight × image, and
+        0 × NaN is NaN: one such pixel in a stamp makes that star's flux and centre NaN, and
+        Piff excludes the star. The working copy of a fit (`write_fit_copy`) therefore sets
+        these pixels to image 0, weight 0, mask 1. Warns for unmasked ones (those are
+        unexpected: real data were never meant to be fitted there).
+
+        Returns
+        -------
+        dict
+            ``total`` (non-finite pixels, all cleaned in the working copy) and ``unmasked``
+            (of those, not flagged in the mask plane).
         """
-        bad = ((self.array("mask") == 0)
-               & ~(np.isfinite(self.array("image")) & np.isfinite(self.array("ivar"))))
-        n = int(bad.sum())
-        if n:
-            warnings.warn(f"{n} unmasked pixels have a non-finite image or weight")
-        return n
+        bad = self.nonfinite()
+        unmasked = int((bad & (self.array("mask") == 0)).sum())
+        if unmasked:
+            warnings.warn(f"{unmasked} unmasked pixels have a non-finite image or weight")
+        return {"total": int(bad.sum()), "unmasked": unmasked}
 
     def piff_input(self, image_file=None):
         """Image part of Piff's ``input`` field.

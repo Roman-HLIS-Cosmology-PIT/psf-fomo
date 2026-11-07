@@ -20,7 +20,7 @@ Example
 ...                   "optimum": out["optimum"]["given"]}, comparison="data", algorithm="gauss")
 """
 from ..piffval.components import components as component_tables
-from ..piffval.residuals import moment_residuals
+from ..piffval.residuals import drawable, moment_residuals
 from ..reference.solver import ReferenceSolver
 from . import diagnostics
 
@@ -40,11 +40,16 @@ class DataReferenceSolver(ReferenceSolver):
         Component kinds held at their given values (see `ReferenceSolver`).
     centers : {'fitted', 'catalog'}
         Held centres: Piff's fitted ones (default) or the catalog positions.
+
+    Stars Piff left with a non-finite flux or centre (excluded from its fit) are left out here
+    too; ``n_excluded`` counts them.
     """
 
     def __init__(self, psf, stars, catalog, freeze=(), centers="fitted"):
-        rows = diagnostics.catalog_rows(stars, catalog)
-        super().__init__(psf, stars, rows, sim=None, freeze=freeze, centers=centers)
+        usable = [s for s in stars if drawable(s)]
+        self.n_excluded = len(stars) - len(usable)
+        rows = diagnostics.catalog_rows(usable, catalog)
+        super().__init__(psf, usable, rows, sim=None, freeze=freeze, centers=centers)
 
     def star_table(self, stars):
         return diagnostics.star_table(self.psf, stars, self.rows)

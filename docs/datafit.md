@@ -29,7 +29,7 @@ fit.set_diagnostics(native=("wmom", "gauss"), oversampled=("hsm",))
 res = fit.run(save_to="out/real01")
 
 res.fit_summary          # chisq_dof, niter, converged, n_catalog, n_objects, n_candidates, ...
-res.checks               # weights_ratio, orientation, n_nonfinite
+res.checks               # weights_ratio, orientation, nonfinite (total, unmasked)
 res.summary()            # flux_cat_r, dx, dy, chisq_dof, sky_resid: fit vs reserve
 res.table                # one row per star
 res.moments              # 'data' (data and model, native) and 'model_os' rows
@@ -69,7 +69,7 @@ from psf_fomo.datafit import L2Image
 img = L2Image("exp_wfi05.fits")       # variant="unif"; sca / filter_name from the header
 img.check_orientation()                # pixel frame vs galsim.roman (parity, pixel scale)
 img.check_weights()                    # standard variant + model_poisson only
-img.check_finite()                     # unmasked NaN pixels (should be 0)
+img.check_finite()                     # NaN pixels: total (cleaned for fits), unmasked (should be 0)
 img.set_weights("model_poisson")       # default; or "ivar"
 img.set_sky()                          # default: SKYBKG; set_sky(0) subtracts nothing
 img.gain_at(x, y, stamp_size=25)       # median gain in the stamp, e⁻ per DN/s
@@ -129,6 +129,15 @@ comparing the file's WCS with `galsim.roman.getWCS` at the exposure's own pointi
   Every flipped pixel keeps its sky position (tested to 1e-6″).
 - `frame="galsim"`: the file is already in GalSim's frame (e.g. simulations); nothing is
   flipped.
+- **Non-finite pixels** are cleaned in the working copy: where image or weight is NaN/inf,
+  image = 0, weight = 0, mask = 1. Piff zero-weights masked pixels, but its sums still multiply
+  weight × image and 0 × NaN = NaN: one NaN in a stamp made a star's flux and centre NaN and
+  Piff excluded it (first real file: 1036 NaN pixels, all masked). For `frame="galsim"` a
+  copy is written only when such pixels exist. `check_finite()` and `res.checks["nonfinite"]`
+  give `total` (cleaned) and `unmasked` (should be 0; a warning otherwise).
+- **Stars Piff cannot fit** (it catches the error, excludes and flags the star) get NaN `chisq`,
+  `dof`, `chisq_dof` in the star table, moment rows with NaN values and flag 8 (+16), and are
+  left out of the reference solver; summaries skip them (`flag` 1).
 - **Catalog positions** are flipped the same way for the fit; the star and selection tables
   keep `x_l2`, `y_l2` (positions in your file) next to `x`, `y` (fit frame).
 - **Measurements** (`StarCatalog.measure`) use the original file in its own frame: moments

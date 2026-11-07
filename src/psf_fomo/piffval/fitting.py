@@ -46,7 +46,8 @@ def fit_columns(psf, stars):
     astropy.table.Table
         Columns ``reserve`` (bool), ``flag`` (1 if Piff flagged the star), ``flux`` (fitted,
         image units), ``model_flux``, ``du``, ``dv`` (arcsec), ``dx``, ``dy`` (pix),
-        ``chisq``, ``dof``, ``chisq_dof``.
+        ``chisq``, ``dof``, ``chisq_dof`` (NaN for a star Piff excluded before computing its
+        χ²; such stars have ``flag`` 1).
     """
     out = Table()
     out["reserve"] = [bool(s.is_reserve) for s in stars]
@@ -59,8 +60,10 @@ def fit_columns(psf, stars):
     pix = [s.data.local_wcs.toImage(galsim.PositionD(u, v)) for s, u, v in zip(stars, du, dv)]
     out["dx"] = [p.x for p in pix]
     out["dy"] = [p.y for p in pix]
-    out["chisq"] = [s.fit.chisq for s in stars]
-    out["dof"] = [s.fit.dof for s in stars]
+    # Piff leaves χ² and dof unset (None) for a star it excluded before any reflux succeeded
+    # (it catches the per-star exception and flags the star): NaN here.
+    out["chisq"] = [np.nan if s.fit.chisq is None else s.fit.chisq for s in stars]
+    out["dof"] = [np.nan if s.fit.dof is None else s.fit.dof for s in stars]
     out["chisq_dof"] = out["chisq"] / np.maximum(out["dof"], 1)
     for name, unit in [("du", "arcsec"), ("dv", "arcsec"), ("dx", "pix"), ("dy", "pix")]:
         out[name].unit = unit

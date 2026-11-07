@@ -204,7 +204,7 @@ class DataFit:
         strict = uses_roman_optics(psf_config)
         checks = {"weights_ratio": self.image.check_weights(),
                   "orientation": self.image.check_orientation(strict=strict),
-                  "n_nonfinite": self.image.check_finite()}
+                  "nonfinite": self.image.check_finite()}
         image_file = self.image.write_fit_copy(save_to / FIT_COPY_NAME)
         piff_catalog = self.catalog.piff_table(self.image, self.stamp_size)
         catalog_file = save_to / "catalog.fits"
@@ -347,7 +347,8 @@ class DataFitResult:
     provenance : dict
         Software versions and creation time.
     checks : dict
-        Image checks: ``weights_ratio``, ``orientation``, ``n_nonfinite``.
+        Image checks: ``weights_ratio``, ``orientation``, ``nonfinite`` (``total``:
+        non-finite pixels, cleaned in the working copy; ``unmasked``: of those, not masked).
     selection : astropy.table.Table
         Every detection with ``on_image``, ``candidate``, ``star`` (see `selection_table`).
     moments : astropy.table.Table or None
