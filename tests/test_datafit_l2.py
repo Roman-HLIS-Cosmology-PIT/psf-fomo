@@ -6,7 +6,7 @@ import piff
 import pytest
 from astropy.table import Table
 
-from l2files import mirrored_wcs, roman_wcs, scene, write_l2_file
+from l2files import mirrored_wcs, open_l2, roman_wcs, scene, write_l2_file
 from psf_fomo.datafit import L2Image, galsim_filter_name
 from psf_fomo.piffval.fitting import make_logger
 
@@ -29,11 +29,11 @@ def l2_file(tmp_path, wcs):
 
 
 def test_metadata_and_hdus(l2_file):
-    img = L2Image(l2_file())
+    img = open_l2(l2_file())
     assert img.variant == "unif" and img.sca == 5 and img.filter_name == "H158"
     assert img.sky_header == SKY and img.sky == SKY and img.exptime == pytest.approx(139.8)
     assert img.weights == "model_poisson"
-    std = L2Image(img.path, variant="standard")
+    std = open_l2(img.path, variant="standard")
     names = ["PRIMARY", "SCI", "DQ", "ERR", "MASK", "IVAR", "VAR_POISSON", "VAR_RNOISE", "GAIN",
              "DUMO", "SCI_UNIF", "MASK_UNIF", "IVAR_UNIF", "GAIN_UNIF"]
     assert img.hdus["image"] == names.index("SCI_UNIF")
@@ -44,18 +44,18 @@ def test_metadata_and_hdus(l2_file):
 def test_missing_uniform_planes(l2_file):
     path = l2_file(uniform=False)
     with pytest.raises(ValueError, match="--uniform"):
-        L2Image(path)
-    assert L2Image(path, variant="standard").hdus["mask"] == 4
+        open_l2(path)
+    assert open_l2(path, variant="standard").hdus["mask"] == 4
 
 
 def test_header_overrides_and_errors(l2_file):
     path = l2_file(primary={"DETECTOR": None, "FILTER": None, "SCA": 7, "OPT_ELEM": "J129"})
-    img = L2Image(path)
+    img = open_l2(path)
     assert img.sca == 7 and img.filter_name == "J129"
     path = l2_file("bare.fits", primary={"DETECTOR": None, "FILTER": None})
     with pytest.raises(ValueError, match="SCA"):
-        L2Image(path)
-    img = L2Image(path, sca=5, filter_name="F158")
+        open_l2(path)
+    img = open_l2(path, sca=5, filter_name="F158")
     assert (img.sca, img.filter_name) == (5, "H158")
 
 
@@ -68,10 +68,10 @@ def test_filter_names():
 
 def test_check_weights(l2_file):
     # Uniform planes and 'ivar' mode need no check.
-    assert L2Image(l2_file()).check_weights() is None
-    good = L2Image(l2_file("bg.fits"), variant="standard")
+    assert open_l2(l2_file()).check_weights() is None
+    good = open_l2(l2_file("bg.fits"), variant="standard")
     assert good.check_weights() == pytest.approx(1.0, abs=1e-5)
-    data_based = L2Image(l2_file("err.fits", background_weights=False), variant="standard")
+    data_based = open_l2(l2_file("err.fits", background_weights=False), variant="standard")
     with pytest.raises(ValueError, match="--background-weights"):
         data_based.check_weights()
     data_based.set_weights("ivar")
@@ -80,7 +80,7 @@ def test_check_weights(l2_file):
 
 def test_check_orientation(tmp_path, wcs):
     sci = scene(wcs, stars=STARS, noise=False)
-    img = L2Image(write_l2_file(tmp_path / "ok.fits", sci, wcs))
+    img = open_l2(write_l2_file(tmp_path / "ok.fits", sci, wcs))
     out = img.check_orientation(pa_deg=0.0)
     assert out["parity_ok"]
     # The local scale differs from the nominal 0.11″ by a few % (Roman's field distortion; at
@@ -88,7 +88,7 @@ def test_check_orientation(tmp_path, wcs):
     assert out["scale"] == pytest.approx(local_scale(wcs, 128.5, 128.5), rel=1e-6)
     assert abs(out["rotation_deg"]) < 2.0  # same frame; only distortion across the SCA
     flipped = mirrored_wcs(wcs, galsim.PositionD(128.5, 128.5))
-    bad = L2Image(write_l2_file(tmp_path / "flip.fits", sci, flipped))
+    bad = open_l2(write_l2_file(tmp_path / "flip.fits", sci, flipped))
     with pytest.raises(ValueError, match="mirrored"):
         bad.check_orientation()
 
@@ -96,7 +96,7 @@ def test_check_orientation(tmp_path, wcs):
 def test_gain_at(l2_file):
     mask = np.zeros((256, 256), np.uint8)
     mask[60:80, 50:70] = 1  # covers the whole 11×11 stamp around star 0
-    img = L2Image(l2_file(mask=mask))
+    img = open_l2(l2_file(mask=mask))
     x, y = [s[0] for s in STARS], [s[1] for s in STARS]
     gains = img.gain_at(x, y, stamp_size=25)
     np.testing.assert_allclose(gains, GAIN)
@@ -104,7 +104,7 @@ def test_gain_at(l2_file):
 
 
 def test_sky_setting_and_piff_input(l2_file):
-    img = L2Image(l2_file())
+    img = open_l2(l2_file())
     inp = img.piff_input()
     assert inp["sky"] == SKY and inp["chipnum"] == 5 and inp["properties"] == {"sca": 5}
     assert inp["bandpass"] == {"type": "RomanBandpass", "name": "H158"}
@@ -125,7 +125,7 @@ def test_piff_reads_the_file(tmp_path, l2_file, wcs):
     # bad pixels, the TAN-SIP WCS from the image header.
     mask = np.zeros((256, 256), np.uint8)
     mask[149, 179] = 1  # 0-based [y-1, x-1]: pixel (180, 150), next to star 1's centre
-    img = L2Image(l2_file(mask=mask))
+    img = open_l2(l2_file(mask=mask))
     cat = Table({"x": [s[0] for s in STARS], "y": [s[1] for s in STARS]})
     cat.write(tmp_path / "cat.fits")
     config = dict(img.piff_input(), cat_file_name=str(tmp_path / "cat.fits"), x_col="x",

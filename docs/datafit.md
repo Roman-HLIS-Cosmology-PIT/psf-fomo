@@ -94,15 +94,55 @@ img.piff_input()                       # image part of Piff's input field
   `SCI_UNIF` by default, so any offset between the two shows up in the per-star sky residual
   (step 2).
 - **Orientation**: Piff's `RomanOptics` evaluates GalSim's field-dependent aberrations at the
-  star's pixel position, so the image must be in `galsim.roman`'s SCA frame.
-  `check_orientation` compares the WCS Jacobian at the image centre with `galsim.roman.getWCS`
-  for the SCA: a mirrored axis (parity) or a pixel scale off by > 5 % is an error (the local
+  star's pixel position, so fits must run in `galsim.roman`'s SCA frame (see *Pixel frames*
+  below). `check_orientation` compares the fit frame's WCS Jacobian at the image centre with
+  `galsim.roman.getWCS` for the SCA: a mirrored axis (parity) or a pixel scale off by > 5 % is
+  an error (`strict=False` warns instead; `DataFit` is strict only for models with
+  RomanOptics, the one component that depends on the pixel frame) (the local
   scale varies by a few % across the focal plane through field distortion, e.g. ≈ 0.107″ at a
   corner of SCA 5, so it is a sanity check for a wrong WCS, not a precision test). With
   `pa_deg` it also reports the rotation; a pure 180° rotation of the pixel frame is visible
   only that way.
 - **Coordinates**: GalSim / FITS, pixel centres at 1 … 4088 (the detection catalog's 0-based
   x, y are shifted by +1 when the Piff catalog is written).
+
+## Pixel frames: Roman science frame vs GalSim
+
+Real L2 files are in Roman's **science frame** (RDox "Coordinate Systems": each detector's
+readout frame flipped along one axis so that all SCAs look alike). `galsim.roman`, and so
+Piff's `RomanOptics`, uses a frame **mirrored** relative to it. Measured on real files by
+comparing the file's WCS with `galsim.roman.getWCS` at the exposure's own pointing
+(`compare_frames`): SCA 11 needs a y flip (rms 1.0″, extra rotation 0.07°), SCA 3 an x flip
+(1.3″, 0.22°); the RDox figure shows the same pattern for all SCAs:
+
+| SCAs | L2 → GalSim |
+|---|---|
+| 1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17 | y flip: y_GalSim = 4089 − y_L2 (measured: 11) |
+| 3, 6, 9, 12, 15, 18 | x flip: x_GalSim = 4089 − x_L2 (measured: 3) |
+
+- `L2Image(path, frame="science")` (default, real L2 files): fits run on a **working copy**
+  flipped into GalSim's frame (`write_fit_copy`, written by `DataFit.run` as
+  `image_galsim_frame.fits` in the fit folder). **The original file is never changed.**
+- The working copy's WCS header is transformed **algebraically**, not refitted: on the flipped
+  axis CRPIX → n + 1 − CRPIX, that column of the CD (or PC / CDELT) matrix changes sign, and
+  each SIP coefficient (A, B, AP, BP) gets the sign the flip implies (`flip_wcs_header`).
+  Every flipped pixel keeps its sky position (tested to 1e-6″).
+- `frame="galsim"`: the file is already in GalSim's frame (e.g. simulations); nothing is
+  flipped.
+- **Catalog positions** are flipped the same way for the fit; the star and selection tables
+  keep `x_l2`, `y_l2` (positions in your file) next to `x`, `y` (fit frame).
+- **Measurements** (`StarCatalog.measure`) use the original file in its own frame: moments
+  are in world axes, so the frame does not matter there, and x, y are those of your file.
+- **Fits without RomanOptics** (Gaussian, PixelGrid, our kernels with no optics component) do
+  not depend on the pixel frame; they also run on the working copy, for uniformity.
+- **Check a file**: `img.compare_frames(pointing)` with the ASDF `meta.pointing` as a dict
+  (`ra_v1`, `dec_v1`, `pa_v3`, `pa_aperture`, `target_ra`, `target_dec`, degrees) returns a
+  table per pointing interpretation × candidate mapping. The GalSim convention that matched
+  on SCAs 3 and 11 is `world_pos` = target, `PA` = `pa_v3` (`PA_is_FPA=False`), with SCA
+  centres within ≈ 1″. Read it in three steps: the matching interpretation has a small
+  `centre_offset`; `rms_rotation_free` (PA-independent) is ≈ 1″ only for the right parity;
+  in the matching interpretation the right mapping has `rms` ≈ `rms_rotation_free` and
+  `extra_rotation` ≈ 0°. Needs the full 4088 × 4088 image.
 
 ## Detection catalog and star selection (`StarCatalog`)
 
@@ -263,11 +303,13 @@ comparison_table({"Piff": res, "Piff, profiled": out["given"],
   simulation one only in the held centres and the truth-free diagnostics.
 - No config-only reference (Piff initialisation without a fit) for real data yet.
 
-**Saved folder**: `catalog.fits`, `piff.yaml`, `detections.fits` (only for a catalog given as
-a table), `psf.fits` (Piff), `stars.fits`,
+**Saved folder**: `catalog.fits`, `piff.yaml`, `image_galsim_frame.fits` (the image flipped
+into GalSim's frame, for `frame="science"`; the size of your file), `detections.fits` (only
+for a catalog given as a table), `psf.fits` (Piff), `stars.fits`,
 `selection.fits`, `moments.fits`, `config.yaml` (run settings incl. the Piff config, fit
-summary, checks, provenance). `load_data_fit(path)` reloads; the image must still be at its
-recorded path. Stamps are re-cut with Piff's Input and the fits attached; Piff's
+summary, checks, provenance). `load_data_fit(path)` reloads: the catalog and (for
+`frame="science"`) the working copy come from the folder, so it can be moved; a
+`frame="galsim"` image must still be at its recorded path. Stamps are re-cut with Piff's Input and the fits attached; Piff's
 `max_snr_weight` scaling is re-applied from the saved `snr` / `raw_snr`; with model Poisson
 weights the Poisson term is re-added from the final model (Piff's last update preceded its
 final reflux, so weights agree to ~1 %, not exactly).

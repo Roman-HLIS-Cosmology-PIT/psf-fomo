@@ -12,8 +12,8 @@ import piff
 import pytest
 from astropy.table import Table
 
-from l2files import field, write_field
-from psf_fomo.datafit import DataFit, L2Image, StarCatalog, load_data_fit
+from l2files import field, open_l2, write_field
+from psf_fomo.datafit import DataFit, StarCatalog, load_data_fit
 from psf_fomo.io import read_yaml
 from psf_fomo.piffval import FitConfig
 from psf_fomo.piffval.fitting import make_logger
@@ -58,7 +58,7 @@ def basic_fit(stars_only, tmp_path_factory):
     cat = StarCatalog(catalog)
     cat.select_stars("all")
     cat.set_cuts(max_snr_weight=0)  # no S/N cap: χ² keeps its noise meaning
-    fit = DataFit(L2Image(image), cat, gaussian_config(), name="basic")
+    fit = DataFit(open_l2(image), cat, gaussian_config(), name="basic")
     fit.set_reserve(0.2, seed=3)
     out = tmp_path_factory.mktemp("fit")
     return fit.run(save_to=out), out
@@ -66,7 +66,7 @@ def basic_fit(stars_only, tmp_path_factory):
 
 def test_piff_table_and_select(stars_only):
     image, catalog, objects = stars_only
-    img = L2Image(image)
+    img = open_l2(image)
     cat = StarCatalog(catalog)
     t = cat.piff_table(img)
     np.testing.assert_allclose(t["x"], [o["x"] for o in objects])  # 0-based + 1
@@ -99,7 +99,7 @@ def test_piff_table_and_select(stars_only):
 def test_catalog_from_table(stars_only, tmp_path):
     # A detection table in memory (e.g. from detect_sources) works like its file.
     image, catalog, _ = stars_only
-    img = L2Image(image)
+    img = open_l2(image)
     from_file = StarCatalog(catalog)
     table = Table.read(catalog)
     table.meta = {str(k).lower(): v for k, v in table.meta.items()}  # keys matched any case
@@ -181,7 +181,7 @@ def test_wrong_pixel_convention_shows_in_centres(stars_only, tmp_path):
     image, catalog, _ = stars_only
     cat = StarCatalog(catalog, zero_based=False)
     cat.select_stars("all")
-    res = DataFit(L2Image(image), cat, gaussian_config()).run(save_to=tmp_path)
+    res = DataFit(open_l2(image), cat, gaussian_config()).run(save_to=tmp_path)
     assert abs(np.median(res.table["dx"]) - 1) < 0.1
     assert abs(np.median(res.table["dy"]) - 1) < 0.1
 
@@ -191,7 +191,7 @@ def test_ivar_mode_has_no_star_poisson(stars_only, tmp_path):
     # pixels of bright stars have residuals far above that noise. Only a few dozen of a
     # stamp's 625 pixels are affected, so the excess shows mostly in the bright stars.
     image, catalog, _ = stars_only
-    img = L2Image(image)
+    img = open_l2(image)
     img.set_weights("ivar")
     cat = StarCatalog(catalog)
     cat.select_stars("all")
@@ -213,7 +213,7 @@ def test_piff_snr_cap_and_reload(stars_only, tmp_path):
     image, catalog, _ = stars_only
     cat = StarCatalog(catalog)
     cat.select_stars("all")
-    res = DataFit(L2Image(image), cat, gaussian_config()).run(save_to=tmp_path)
+    res = DataFit(open_l2(image), cat, gaussian_config()).run(save_to=tmp_path)
     capped = [s for s in res.psf.stars if s.data.properties["snr"] < s.data.properties["raw_snr"]]
     assert capped and res.fit_summary["chisq_dof"] < 0.9
     stars0, _ = res.fitted_stars()
@@ -258,7 +258,7 @@ def test_sizemag_picks_the_stars(stars_and_galaxies, tmp_path):
     cat = StarCatalog(catalog)
     cat.select_stars("sizemag")   # with shape method gauss
     cat.set_cuts(clean_only=False)
-    res = DataFit(L2Image(image), cat, gaussian_config()).run(save_to=tmp_path)
+    res = DataFit(open_l2(image), cat, gaussian_config()).run(save_to=tmp_path)
     is_star = {o["id"]: o["is_star"] for o in objects}
     chosen = [int(i) for i in res.selection["id"][res.selection["candidate"]]]
     purity = np.mean([is_star[i] for i in chosen])
@@ -272,7 +272,7 @@ def test_min_sep_counts_galaxies_as_neighbours(stars_and_galaxies, tmp_path):
     cat = StarCatalog(catalog)
     cat.select_stars("column", column="is_star", use_flag=1)
     cat.set_cuts(clean_only=False, min_sep=1.5)
-    res = DataFit(L2Image(image), cat, gaussian_config()).run(save_to=tmp_path)
+    res = DataFit(open_l2(image), cat, gaussian_config()).run(save_to=tmp_path)
     near = objects[-1]["id"]
     sel = res.selection[res.selection["id"] == near][0]
     assert sel["candidate"] and not sel["star"]
@@ -283,6 +283,6 @@ def test_min_sep_counts_galaxies_as_neighbours(stars_and_galaxies, tmp_path):
 
 def test_truth_comparisons_rejected(stars_only):
     image, catalog, _ = stars_only
-    fit = DataFit(L2Image(image), StarCatalog(catalog), gaussian_config())
+    fit = DataFit(open_l2(image), StarCatalog(catalog), gaussian_config())
     with pytest.raises(ValueError, match="no truth"):
         fit.set_diagnostics(comparisons=("data", "truth_os"))

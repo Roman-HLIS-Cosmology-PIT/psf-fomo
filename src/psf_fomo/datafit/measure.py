@@ -83,7 +83,10 @@ def measure_objects(image, catalog, algorithms=("gauss",), wmom_fwhm=(DEFAULT_WM
         raise ValueError(f"algorithms {unknown} not in {ALGORITHMS}")
     labels = [(a, f) for a in algorithms
               for f in ([float(w) for w in np.atleast_1d(wmom_fwhm)] if a == "wmom" else [None])]
-    piff_catalog = _subset(catalog.piff_table(image, stamp_size), mag_range, max_objects)
+    # The original file in its own frame: moments use only the local WCS (world axes), so the
+    # pixel frame does not matter here, and x, y stay those of the L2 file.
+    piff_catalog = _subset(catalog.piff_table(image, stamp_size, fit_frame=False), mag_range,
+                           max_objects)
     logger, _ = make_logger(verbose)
     with tempfile.TemporaryDirectory() as tmp:
         # Imported here: fit.py imports catalog.py, which calls this module.

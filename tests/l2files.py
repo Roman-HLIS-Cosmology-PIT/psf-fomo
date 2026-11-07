@@ -13,6 +13,23 @@ from astropy.io import fits
 from psf_fomo.sim.wcs import DEFAULT_DEC, DEFAULT_RA
 
 
+def open_l2(path, **kwargs):
+    """`L2Image` of a test file: these are written in GalSim's frame (``frame='galsim'``)."""
+    from psf_fomo.datafit import L2Image
+    return L2Image(path, frame="galsim", **kwargs)
+
+
+def to_science_frame(src, dst):
+    """Write a GalSim-frame test file as Roman's science frame (the per-SCA flip).
+
+    The flip is its own inverse, so flipping a GalSim-frame file with
+    `L2Image.write_fit_copy` gives the science-frame file; that function is tested separately
+    against sky positions.
+    """
+    from psf_fomo.datafit import L2Image
+    return L2Image(src, frame="science").write_fit_copy(dst)
+
+
 def roman_wcs(sca=5, pa_deg=0.0):
     """galsim.roman WCS of one SCA at the repo's default pointing (an observable one)."""
     pointing = galsim.CelestialCoord(DEFAULT_RA * galsim.degrees, DEFAULT_DEC * galsim.degrees)
@@ -136,11 +153,14 @@ def write_field(folder, objects, shape=(700, 700), sca=5, sky=2.0, read_var=0.01
 
 def write_l2_file(path, sci, wcs, sca=5, filter_name="F158", sky=2.0, read_var=0.01,
                   gain=250.0, mask=None, dumo=None, uniform=True, background_weights=True,
-                  primary=None):
+                  primary=None, planes="all"):
     """Write ``sci`` (DN/s, sky included) in the converter's layout.
 
     Parameters
     ----------
+    planes : {'all', 'unif'}
+        ``'all'``: every plane of the layout. ``'unif'``: only SCI_UNIF, MASK_UNIF,
+        IVAR_UNIF, GAIN_UNIF (what a ``variant='unif'`` fit reads; for full-SCA tests).
     background_weights : bool
         IVAR = 1/(VAR_RNOISE + SKYBKG/GAIN) (converter's ``--background-weights``) if True,
         else 1/ERR² (contains the stars' Poisson noise).
@@ -177,12 +197,14 @@ def write_l2_file(path, sci, wcs, sca=5, filter_name="F158", sky=2.0, read_var=0
             h.header.extend(wcs_cards, unique=True)
         return h
 
-    hdus += [image_hdu("SCI", sci, True), image_hdu("DQ", mask.astype(np.int32)),
-             image_hdu("ERR", err), image_hdu("MASK", mask),
-             image_hdu("IVAR", ivar.astype(np.float32)), image_hdu("VAR_POISSON", var_poisson),
-             image_hdu("VAR_RNOISE", var_rnoise), image_hdu("GAIN", gain_map),
-             image_hdu("DUMO", dumo), image_hdu("SCI_UNIF", sci + dumo, True)]
-    if uniform:
+    if planes == "all":
+        hdus += [image_hdu("SCI", sci, True), image_hdu("DQ", mask.astype(np.int32)),
+                 image_hdu("ERR", err), image_hdu("MASK", mask),
+                 image_hdu("IVAR", ivar.astype(np.float32)),
+                 image_hdu("VAR_POISSON", var_poisson), image_hdu("VAR_RNOISE", var_rnoise),
+                 image_hdu("GAIN", gain_map), image_hdu("DUMO", dumo)]
+    hdus += [image_hdu("SCI_UNIF", sci + dumo, True)]
+    if uniform or planes == "unif":
         hdus += [image_hdu("MASK_UNIF", mask),
                  image_hdu("IVAR_UNIF", (1 / (var_rnoise + sky / gain_map)).astype(np.float32)),
                  image_hdu("GAIN_UNIF", gain_map)]

@@ -15,11 +15,12 @@ Shares only truth-free functions with `psf_fomo.piffval` (``FitConfig``, ``fitti
 """
 from .catalog import StarCatalog
 from .fit import DataFit, DataFitResult, load_data_fit
-from .l2 import L2Image, galsim_filter_name
+from .l2 import L2Image, compare_frames, flip_axis, flip_wcs_header, galsim_filter_name
 from .measure import measure_objects
 from .plotting import plot_size_mag
 from .reference import DataReferenceSolver, reference_from_data_fit
 
 __all__ = ["L2Image", "StarCatalog", "DataFit", "DataFitResult", "load_data_fit",
            "measure_objects", "plot_size_mag", "DataReferenceSolver",
-           "reference_from_data_fit", "galsim_filter_name"]
+           "reference_from_data_fit", "galsim_filter_name", "compare_frames", "flip_axis",
+           "flip_wcs_header"]

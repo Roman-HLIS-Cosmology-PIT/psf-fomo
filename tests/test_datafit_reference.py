@@ -4,8 +4,8 @@ import importlib.util
 import numpy as np
 import pytest
 
-from l2files import field, write_field
-from psf_fomo.datafit import DataFit, DataReferenceSolver, L2Image, StarCatalog
+from l2files import field, open_l2, write_field
+from psf_fomo.datafit import DataFit, DataReferenceSolver, StarCatalog
 from psf_fomo.piffval import FitConfig
 from psf_fomo.reference import comparison_table
 
@@ -20,7 +20,7 @@ def data_fit(tmp_path_factory):
     cat = StarCatalog(catalog)
     cat.select_stars("all")
     cat.set_cuts(clean_only=False, max_snr_weight=0)  # χ² at the noise scale
-    fit = DataFit(L2Image(image), cat, FitConfig.from_piff_config(GAUSSIAN_MODEL))
+    fit = DataFit(open_l2(image), cat, FitConfig.from_piff_config(GAUSSIAN_MODEL))
     fit.set_reserve(0.2, seed=1)
     if importlib.util.find_spec("ngmix") is None:  # wmom / gauss moments need ngmix
         fit.set_diagnostics(moments=False)

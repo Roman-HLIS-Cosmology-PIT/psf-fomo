@@ -23,6 +23,21 @@ Weights (`L2Image.set_weights`):
 - ``'ivar'``: the weight plane as it is, no Poisson term added by Piff.
 
 Coordinates: GalSim / FITS convention, pixel centres at 1 … 4088.
+
+Pixel frames. Roman's L2 products are in the "science" frame (Roman documentation, RDox
+"Coordinate Systems"): each detector's readout frame flipped along one axis so that all SCAs
+look alike. ``galsim.roman`` (and so Piff's RomanOptics) uses a frame mirrored relative to it,
+which RomanOptics needs (its aberration field is evaluated at the star's pixel position).
+Measured on real files with the exposure's own pointing (`compare_frames`; SCA 11: y flip,
+1.0″ rms; SCA 3: x flip, 1.3″), and as the RDox figure shows for all SCAs:
+
+- y flip (y_GalSim = n + 1 − y_L2) for SCAs 1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17;
+- x flip (x_GalSim = n + 1 − x_L2) for SCAs 3, 6, 9, 12, 15, 18.
+
+``L2Image(frame='science')`` (default, real L2 files) fits on a flipped working copy
+(`write_fit_copy`; the original file is never changed); ``frame='galsim'`` for files already
+in GalSim's frame (e.g. our simulations). The working copy's WCS header is flipped
+algebraically (`flip_wcs_header`), not refitted, so every flipped pixel keeps its sky position.
 """
 import warnings
 from pathlib import Path
@@ -31,6 +46,7 @@ import numpy as np
 import galsim
 import galsim.roman
 from astropy.io import fits
+from astropy.table import Table
 
 from ..sim.wcs import DEFAULT_DEC, DEFAULT_RA
 
@@ -49,6 +65,14 @@ SKY_KEY = "SKYBKG"
 N_CHECK_PIXELS = 2000   # at most this many of the brightest source pixels in check_weights
 MIN_CHECK_PIXELS = 20   # fewer source pixels than this: check_weights cannot decide
 MIN_CHECK_SIGMA = 10.0  # a source pixel is this many background σ above the sky
+FRAMES = ("science", "galsim")
+X_FLIP_SCAS = (3, 6, 9, 12, 15, 18)   # the bottom detector row; all other SCAs flip y
+FIT_COPY_NAME = "image_galsim_frame.fits"
+
+
+def flip_axis(sca):
+    """Axis (``'x'`` or ``'y'``) flipped between Roman's science frame and GalSim's, for an SCA."""
+    return "x" if int(sca) in X_FLIP_SCAS else "y"
 
 
 class L2Image:
@@ -67,10 +91,16 @@ class L2Image:
     filter_name : str, optional
         Roman F name (``'F158'``) or GalSim name (``'H158'``). Default: from the PRIMARY header
         (``FILTER`` or ``OPT_ELEM``).
+    frame : {'science', 'galsim'}
+        Pixel frame of this file. ``'science'`` (default): Roman's L2 science frame; fits run
+        on a copy flipped into GalSim's frame (`flip`, `write_fit_copy`). ``'galsim'``: the
+        file is already in GalSim's frame (e.g. a simulation); nothing is flipped.
 
     Attributes
     ----------
     sca : int
+    flip : {'x', 'y'} or None
+        Axis flipped between this file and the fit frame (None for ``frame='galsim'``).
     filter_name : str
         GalSim bandpass name (e.g. ``'H158'``).
     hdus : dict
@@ -89,9 +119,12 @@ class L2Image:
     >>> img.piff_input()["image_hdu"]
     """
 
-    def __init__(self, path, variant="unif", sca=None, filter_name=None):
+    def __init__(self, path, variant="unif", sca=None, filter_name=None, frame="science"):
         if variant not in VARIANTS:
             raise ValueError(f"variant must be one of {list(VARIANTS)}")
+        if frame not in FRAMES:
+            raise ValueError(f"frame must be one of {FRAMES}")
+        self.frame = frame
         self.path = Path(path).resolve()
         if not self.path.exists():
             raise FileNotFoundError(self.path)
@@ -127,6 +160,67 @@ class L2Image:
         self.weights = "model_poisson"
         self.sky = self.sky_header
         self._arrays = {}
+
+    @property
+    def flip(self):
+        """Axis flipped between this file and GalSim's frame, or None."""
+        return None if self.frame == "galsim" else flip_axis(self.sca)
+
+    def to_fit_frame(self, x, y):
+        """Pixel positions (1-based) of this file in the fit (GalSim) frame.
+
+        The flip is its own inverse, so this also maps fit-frame positions back to the file.
+        """
+        x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+        ny, nx = self.shape
+        if self.flip == "x":
+            return nx + 1 - x, y
+        if self.flip == "y":
+            return x, ny + 1 - y
+        return x, y
+
+    def write_fit_copy(self, path):
+        """Write this file flipped into GalSim's frame; the original is not changed.
+
+        Every 2-d plane of the image's shape is flipped along `flip`, and every header with a
+        WCS is transformed with `flip_wcs_header`. Other HDUs are copied as they are.
+
+        Parameters
+        ----------
+        path : str or Path
+            Output file (overwritten).
+
+        Returns
+        -------
+        Path
+            ``path``, or this file's own path when no flip is needed (``frame='galsim'``).
+        """
+        if self.flip is None:
+            return self.path
+        path = Path(path)
+        numpy_axis = 1 if self.flip == "x" else 0   # arrays are indexed [y, x]
+        with fits.open(self.path) as hdul:
+            out = []
+            for i, hdu in enumerate(hdul):
+                if i > 0 and not hdu.is_image:
+                    out.append(hdu.copy())  # e.g. a table: no pixel axes
+                    continue
+                header = hdu.header.copy()
+                # astropy has applied any integer scaling to the data already; it picks its
+                # own when writing (keeping BZERO / BSCALE would scale twice).
+                for key in ("BZERO", "BSCALE"):
+                    header.remove(key, ignore_missing=True)
+                if "CTYPE1" in header:
+                    header = flip_wcs_header(header, self.flip, self.shape)
+                data = hdu.data
+                if data is not None and data.ndim == 2 and data.shape == self.shape:
+                    data = np.ascontiguousarray(np.flip(data, axis=numpy_axis))
+                if i == 0:
+                    out.append(fits.PrimaryHDU(data=data, header=header))
+                else:  # compressed planes are written uncompressed
+                    out.append(fits.ImageHDU(data=data, header=header, name=hdu.name))
+            fits.HDUList(out).writeto(path, overwrite=True)
+        return path
 
     def set_weights(self, mode="model_poisson"):
         """Noise model of the fit.
@@ -244,16 +338,17 @@ class L2Image:
                 "--background-weights, or use set_weights('ivar').")
         return ratio
 
-    def check_orientation(self, pa_deg=None, pa_is_fpa=False):
-        """Compare the image's pixel frame with ``galsim.roman``'s frame for this SCA.
+    def check_orientation(self, pa_deg=None, pa_is_fpa=False, strict=True):
+        """Compare the fit frame (this file after `flip`) with ``galsim.roman``'s SCA frame.
 
         Piff's RomanOptics evaluates GalSim's field-dependent aberrations at the star's pixel
-        position, so the image must be in the SCA frame of ``galsim.roman``. Compares the local
-        WCS Jacobian at the image centre with that of ``galsim.roman.getWCS`` at the SCA
-        centre. GalSim's WCS is built at a fixed observable pointing (``psf_fomo.sim.wcs``
-        default; ``getWCS`` may refuse pointings it deems unobservable on its default date):
-        parity does not depend on the pointing, the rotation only weakly (< 1° away from the
-        celestial poles).
+        position, so the fit must run in the SCA frame of ``galsim.roman``. Compares the local
+        WCS Jacobian at the image centre (with the frame flip applied) with that of
+        ``galsim.roman.getWCS`` at the SCA centre. GalSim's WCS is built at a fixed observable
+        pointing (``psf_fomo.sim.wcs`` default; ``getWCS`` may refuse pointings it deems
+        unobservable on its default date): parity does not depend on the pointing, the
+        rotation only weakly (< 1° away from the celestial poles). For the full mapping with
+        the exposure's own pointing use `compare_frames`.
 
         Parameters
         ----------
@@ -263,17 +358,21 @@ class L2Image:
             it also the rotation is reported.
         pa_is_fpa : bool
             ``pa_deg`` is the focal-plane PA (GalSim's ``PA_is_FPA``). Default False.
+        strict : bool
+            Raise on a failed check (default). False: warn and return the result (for fits
+            that do not use RomanOptics, where the frame does not matter).
 
         Returns
         -------
         dict
-            ``parity_ok``, ``scale`` (arcsec/pix, √|det J|), ``rotation_deg`` (file − GalSim,
-            None without ``pa_deg``).
+            ``parity_ok``, ``scale`` (arcsec/pix, √|det J|), ``rotation_deg`` (fit frame −
+            GalSim, None without ``pa_deg``), ``frame``, ``flip``.
 
         Raises
         ------
         ValueError
-            If the parity differs (one axis mirrored) or the pixel scale is off by > 5 %.
+            With ``strict``: if the parity differs (one axis mirrored) or the pixel scale is
+            off by > 5 %.
 
         Notes
         -----
@@ -281,8 +380,13 @@ class L2Image:
         ``rotation_deg`` with a known PA.
         """
         ny, nx = self.shape
-        centre = galsim.PositionD((nx + 1) / 2, (ny + 1) / 2)
+        centre = galsim.PositionD((nx + 1) / 2, (ny + 1) / 2)  # its own mirror image
         j_file = self.wcs.local(centre).jacobian().getMatrix()
+        # The fit frame: a flipped axis reverses that column of the Jacobian.
+        if self.flip == "x":
+            j_file = j_file @ np.diag([-1.0, 1.0])
+        elif self.flip == "y":
+            j_file = j_file @ np.diag([1.0, -1.0])
         pa = (pa_deg if pa_deg is not None else 0.0) * galsim.degrees
         pointing = galsim.CelestialCoord(DEFAULT_RA * galsim.degrees,
                                          DEFAULT_DEC * galsim.degrees)
@@ -293,17 +397,31 @@ class L2Image:
         scale = float(np.sqrt(abs(np.linalg.det(j_file))))
         out = {"parity_ok": bool(np.sign(np.linalg.det(j_file))
                                  == np.sign(np.linalg.det(j_roman))),
-               "scale": scale, "rotation_deg": None}
+               "scale": scale, "rotation_deg": None, "frame": self.frame, "flip": self.flip}
         if pa_deg is not None:
             out["rotation_deg"] = float(np.degrees(_angle(j_file) - _angle(j_roman)) + 180) % 360 - 180
+        problems = []
         if not out["parity_ok"]:
-            raise ValueError("the image's pixel frame is mirrored relative to galsim.roman's "
-                             f"SCA {self.sca} frame: RomanOptics' field dependence would be "
-                             "wrong. Check the converter's orientation.")
+            problems.append(
+                f"the fit frame (file frame {self.frame!r}, flip {self.flip}) is mirrored "
+                f"relative to galsim.roman's SCA {self.sca} frame: RomanOptics' field "
+                "dependence would be wrong. Is the file's frame set correctly (real L2: "
+                "'science'; files already in GalSim's frame: 'galsim')?")
         if abs(scale / galsim.roman.pixel_scale - 1) > 0.05:
-            raise ValueError(f"pixel scale {scale:.4f}″ differs from "
-                             f"galsim.roman.pixel_scale = {galsim.roman.pixel_scale}″")
+            problems.append(f"pixel scale {scale:.4f}″ differs from "
+                            f"galsim.roman.pixel_scale = {galsim.roman.pixel_scale}″")
+        for problem in problems:
+            if strict:
+                raise ValueError(problem)
+            warnings.warn(problem)
         return out
+
+    def compare_frames(self, pointing, date=None):
+        """Map this file's pixels onto ``galsim.roman``'s SCA frame using the exposure's pointing.
+
+        See `compare_frames` (module function). Needs a full-SCA image (4088 × 4088).
+        """
+        return compare_frames(self.wcs, self.sca, self.shape, pointing, date)
 
     def check_finite(self):
         """Number of unmasked pixels whose image or weight is not finite (should be 0).
@@ -318,8 +436,14 @@ class L2Image:
             warnings.warn(f"{n} unmasked pixels have a non-finite image or weight")
         return n
 
-    def piff_input(self):
-        """Image part of Piff's ``input`` field for this file.
+    def piff_input(self, image_file=None):
+        """Image part of Piff's ``input`` field.
+
+        Parameters
+        ----------
+        image_file : str or Path, optional
+            File Piff reads: default this file; `DataFit` passes the flipped working copy
+            (`write_fit_copy`, same HDU layout).
 
         Returns
         -------
@@ -328,7 +452,8 @@ class L2Image:
             ``sky`` (only if ≠ 0), ``chipnum`` = SCA, ``properties`` {``sca``}, ``bandpass``.
             The catalog part and the per-star gain (``gain_col``) are added by `DataFit`.
         """
-        out = {"image_file_name": str(self.path), "image_hdu": self.hdus["image"],
+        path = self.path if image_file is None else Path(image_file).resolve()
+        out = {"image_file_name": str(path), "image_hdu": self.hdus["image"],
                "weight_hdu": self.hdus["ivar"], "badpix_hdu": self.hdus["mask"],
                "chipnum": self.sca, "properties": {"sca": self.sca},
                "bandpass": {"type": "RomanBandpass", "name": self.filter_name}}
@@ -339,17 +464,164 @@ class L2Image:
     def config(self):
         """Settings as a plain dict (saved with fit results; `from_config` rebuilds)."""
         return {"path": str(self.path), "variant": self.variant, "sca": self.sca,
-                "filter_name": self.filter_name, "weights": self.weights, "sky": self.sky,
+                "filter_name": self.filter_name, "frame": self.frame, "flip": self.flip,
+                "weights": self.weights, "sky": self.sky,
                 "sky_header": self.sky_header, "exptime": self.exptime,
                 "wcs_err": self.wcs_err, "hdus": dict(self.hdus)}
 
     @classmethod
     def from_config(cls, config):
         """Rebuild from `config` output."""
-        img = cls(config["path"], config["variant"], config["sca"], config["filter_name"])
+        img = cls(config["path"], config["variant"], config["sca"], config["filter_name"],
+                  config.get("frame", "science"))
         img.set_weights(config["weights"])
         img.set_sky(config["sky"])
         return img
+
+
+def flip_wcs_header(header, axis, shape):
+    """A copy of a FITS WCS header for the image flipped along one pixel axis.
+
+    Pixel x' = n + 1 − x (axis ``'x'``) or y' = n + 1 − y (axis ``'y'``), n the image size
+    along that axis; every flipped pixel keeps its sky position. Exact (no refit): with
+    offsets u = x − CRPIX1, v = y − CRPIX2 (and U, V after the SIP distortion), flipping x
+    maps u → −u, U → −U, so
+
+    - CRPIX on the flipped axis → n + 1 − CRPIX;
+    - that column of the linear matrix (CD, or PC; CDELT when neither exists) changes sign;
+    - SIP coefficients with power k of the flipped coordinate get (−1)^k, and the polynomial
+      of the flipped coordinate itself (A, AP for x; B, BP for y) one more factor −1.
+
+    Parameters
+    ----------
+    header : astropy.io.fits.Header
+    axis : {'x', 'y'}
+    shape : (ny, nx)
+        Image shape.
+
+    Returns
+    -------
+    astropy.io.fits.Header
+    """
+    if axis not in ("x", "y"):
+        raise ValueError("axis must be 'x' or 'y'")
+    h = header.copy()
+    i = 1 if axis == "x" else 2
+    n = shape[1] if axis == "x" else shape[0]
+    h[f"CRPIX{i}"] = n + 1 - float(h[f"CRPIX{i}"])
+    if any(f"CD{j}_{k}" in h for j in (1, 2) for k in (1, 2)):
+        for j in (1, 2):
+            h[f"CD{j}_{i}"] = -float(h.get(f"CD{j}_{i}", 0.0))
+    elif any(f"PC{j}_{k}" in h for j in (1, 2) for k in (1, 2)):
+        for j in (1, 2):
+            h[f"PC{j}_{i}"] = -float(h.get(f"PC{j}_{i}", 1.0 if j == i else 0.0))
+    else:
+        h[f"CDELT{i}"] = -float(h.get(f"CDELT{i}", 1.0))
+    own = ("A", "AP") if axis == "x" else ("B", "BP")
+    for prefix in ("A", "B", "AP", "BP"):
+        order = int(h.get(f"{prefix}_ORDER", -1))
+        for p in range(order + 1):
+            for q in range(order + 1 - p):
+                key = f"{prefix}_{p}_{q}"
+                if key in h:
+                    sign = (-1) ** (p if axis == "x" else q)
+                    h[key] = float(h[key]) * (-sign if prefix in own else sign)
+    return h
+
+
+def compare_frames(wcs, sca, shape, pointing, date=None, n_grid=7):
+    """Which pixel mapping takes a full-SCA image onto ``galsim.roman``'s SCA frame.
+
+    A grid of pixels goes to the sky through ``wcs`` and, after each candidate mapping (as-is,
+    flip x, flip y, rotate 180), through ``galsim.roman.getWCS`` for the exposure's own
+    pointing. Both are measured relative to their own SCA centre (a pointing offset cancels).
+    The pointing is tried in four interpretations: ``world_pos`` = the V1 axis or the target,
+    and ``PA`` = ``pa_v3`` (``PA_is_FPA=False``) or ``pa_aperture`` (``PA_is_FPA=True``). On
+    real L2 files (SCAs 3 and 11) ``world_pos`` = target with ``PA`` = ``pa_v3`` matched, with
+    SCA centres within ≈ 1″.
+
+    How to read it: (1) the right pointing interpretation has a small ``centre_offset``
+    (arcsec; independent of the mapping); (2) ``rms_rotation_free`` (best rotation removed,
+    PA-independent) is small (≈ 1″) only for the right parity, the same pair in every
+    interpretation; (3) in the right interpretation the right mapping has ``rms`` ≈
+    ``rms_rotation_free`` and ``extra_rotation`` ≈ 0°.
+
+    Parameters
+    ----------
+    wcs : galsim.BaseWCS
+        The image's (celestial) WCS.
+    sca : int
+    shape : (ny, nx)
+        Image shape; must be the full SCA (``galsim.roman.n_pix`` square).
+    pointing : dict
+        The exposure's ``meta.pointing``: ``ra_v1``, ``dec_v1``, ``pa_v3``, ``pa_aperture``,
+        ``target_ra``, ``target_dec`` in degrees.
+    date : datetime.datetime, optional
+        Observation date for ``getWCS`` (it may refuse a pointing on its default date).
+    n_grid : int
+        Grid points per axis. Default 7.
+
+    Returns
+    -------
+    astropy.table.Table
+        One row per interpretation × mapping: ``world_pos``, ``pa``, ``pa_is_fpa``,
+        ``mapping``, ``centre_offset``, ``rms``, ``rms_rotation_free`` (arcsec),
+        ``extra_rotation`` (deg), ``error`` (getWCS message if it failed). ``meta['best']``:
+        the mapping with the smallest ``rms``.
+    """
+    n = galsim.roman.n_pix
+    if tuple(shape) != (n, n):
+        raise ValueError(f"compare_frames needs a full SCA image ({n} × {n}), got {shape}")
+    g = np.linspace(1, n, n_grid)
+    xs, ys = (a.ravel() for a in np.meshgrid(g, g))
+    centre = galsim.PositionD((n + 1) / 2, (n + 1) / 2)
+    mappings = {"as-is": (xs, ys), "flip x": (n + 1 - xs, ys),
+                "flip y": (xs, n + 1 - ys), "rotate 180": (n + 1 - xs, n + 1 - ys)}
+    c_file = wcs.toWorld(centre)
+    p_file = _tangent(wcs, xs, ys, c_file)
+    rows = []
+    for pos_name, ra, dec in (("V1", "ra_v1", "dec_v1"), ("target", "target_ra", "target_dec")):
+        world = galsim.CelestialCoord(float(pointing[ra]) * galsim.degrees,
+                                      float(pointing[dec]) * galsim.degrees)
+        for pa_name, is_fpa in (("pa_v3", False), ("pa_aperture", True)):
+            base = {"world_pos": pos_name, "pa": pa_name, "pa_is_fpa": is_fpa}
+            try:
+                gs = galsim.roman.getWCS(world_pos=world,
+                                         PA=float(pointing[pa_name]) * galsim.degrees,
+                                         date=date, SCAs=[int(sca)], PA_is_FPA=is_fpa)[int(sca)]
+            except Exception as err:  # e.g. a pointing GalSim deems unobservable on its date
+                for name in mappings:
+                    rows.append(dict(base, mapping=name, centre_offset=np.nan, rms=np.nan,
+                                     rms_rotation_free=np.nan, extra_rotation=np.nan,
+                                     error=str(err)))
+                continue
+            c_gs = gs.toWorld(centre)
+            offset = c_file.distanceTo(c_gs) / galsim.arcsec
+            for name, (tx, ty) in mappings.items():
+                p_gs = _tangent(gs, tx, ty, c_gs)
+                rms = float(np.sqrt(np.mean(np.sum((p_file - p_gs) ** 2, axis=1))))
+                free, angle = _rms_after_rotation(p_file, p_gs)
+                rows.append(dict(base, mapping=name, centre_offset=float(offset), rms=rms,
+                                 rms_rotation_free=free, extra_rotation=angle, error=""))
+    out = Table(rows=rows)
+    finite = np.isfinite(out["rms"])
+    out.meta["best"] = (str(out["mapping"][np.nanargmin(out["rms"])]) if finite.any()
+                        else None)
+    return out
+
+
+def _tangent(wcs, x, y, about):
+    """Sky positions of pixels (x, y) projected about ``about``, arcsec, shape (n, 2)."""
+    uv = [about.project(wcs.toWorld(galsim.PositionD(a, b))) for a, b in zip(x, y)]
+    return np.array([(u / galsim.arcsec, v / galsim.arcsec) for u, v in uv])
+
+
+def _rms_after_rotation(p, q):
+    """rms |p − R q| for the best rotation R (absorbs a position-angle error, not a mirror)."""
+    angle = np.arctan2(np.sum(q[:, 0] * p[:, 1] - q[:, 1] * p[:, 0]), np.sum(p * q))
+    c, s = np.cos(angle), np.sin(angle)
+    rq = q @ np.array([[c, s], [-s, c]])
+    return float(np.sqrt(np.mean(np.sum((p - rq) ** 2, axis=1)))), float(np.degrees(angle))
 
 
 def galsim_filter_name(name):

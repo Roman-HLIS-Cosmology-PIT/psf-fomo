@@ -44,7 +44,7 @@ from ..piffval.residuals import (MODEL_OS_SIZE, model_moments, moment_residuals,
                                  moment_summary, sca_grid)
 from . import diagnostics
 from .catalog import PIFF_ID, StarCatalog
-from .l2 import L2Image
+from .l2 import FIT_COPY_NAME, L2Image
 
 DATA_COMPARISONS = ("data", "model_os")
 DEFAULT_DIAGNOSTICS = {"moments": True, "native": ["wmom", "gauss"],
@@ -144,7 +144,7 @@ class DataFit:
             raise ValueError("verbose must be 0, 1, 2 or 3")
         self.verbose = verbose
 
-    def piff_config(self, catalog_file, piff_catalog):
+    def piff_config(self, catalog_file, piff_catalog, image_file=None):
         """Full Piff config (``modules``, ``input``, ``select``, ``psf``, ``shape_method``).
 
         Parameters
@@ -153,13 +153,16 @@ class DataFit:
             Where the Piff catalog is (or will be) written.
         piff_catalog : astropy.table.Table
             That catalog (`StarCatalog.piff_table`), for its column names.
+        image_file : str or Path, optional
+            The image file Piff reads (default the image's own; `run` passes the working copy
+            in GalSim's frame).
 
         Returns
         -------
         dict
         """
         inp = piff_input_config(self.image, self.catalog, catalog_file, piff_catalog,
-                                self.stamp_size)
+                                self.stamp_size, image_file)
         select = self.catalog.piff_select()
         select.update(reserve_frac=self.reserve["frac"], seed=self.reserve["seed"])
         shape = self.fit_config.config["shape_method"]
@@ -184,8 +187,10 @@ class DataFit:
         ----------
         save_to : str or Path
             Output folder (Piff reads the catalog from it): ``catalog.fits``, ``piff.yaml``,
-            ``detections.fits`` (only for a catalog given as a table: the full table), and
-            the result files (see `DataFitResult.save`).
+            ``image_galsim_frame.fits`` (the image flipped into GalSim's frame, for
+            ``frame='science'`` files; the original is not changed), ``detections.fits``
+            (only for a catalog given as a table: the full table), and the result files (see
+            `DataFitResult.save`).
 
         Returns
         -------
@@ -193,13 +198,18 @@ class DataFit:
         """
         save_to = Path(save_to)
         save_to.mkdir(parents=True, exist_ok=True)
+        psf_config = self.fit_config.piff_config(self.image.filter_name)
+        # Only RomanOptics depends on the pixel frame (GalSim's aberration field at the star's
+        # pixel position); other models are built on the sky through the WCS.
+        strict = uses_roman_optics(psf_config)
         checks = {"weights_ratio": self.image.check_weights(),
-                  "orientation": self.image.check_orientation(),
+                  "orientation": self.image.check_orientation(strict=strict),
                   "n_nonfinite": self.image.check_finite()}
+        image_file = self.image.write_fit_copy(save_to / FIT_COPY_NAME)
         piff_catalog = self.catalog.piff_table(self.image, self.stamp_size)
         catalog_file = save_to / "catalog.fits"
         piff_catalog.write(catalog_file, overwrite=True)
-        config = self.piff_config(catalog_file, piff_catalog)
+        config = self.piff_config(catalog_file, piff_catalog, image_file)
         write_yaml(save_to / "piff.yaml", config)
 
         logger, watch = make_logger(self.verbose)
@@ -237,7 +247,8 @@ class DataFit:
         return result
 
 
-def piff_input_config(image, catalog, catalog_file, piff_catalog, stamp_size=25):
+def piff_input_config(image, catalog, catalog_file, piff_catalog, stamp_size=25,
+                      image_file=None):
     """Piff's ``input`` field: the image part (`L2Image.piff_input`) plus the catalog.
 
     Parameters
@@ -247,21 +258,35 @@ def piff_input_config(image, catalog, catalog_file, piff_catalog, stamp_size=25)
     catalog_file : str or Path
         Where the Piff catalog (``piff_catalog``) is written.
     piff_catalog : astropy.table.Table
-        `StarCatalog.piff_table` output, for its column names.
+        `StarCatalog.piff_table` output, for its column names; its positions must be in the
+        frame of the file Piff reads.
     stamp_size : int
         Stamp side, pixels. Default 25.
+    image_file : str or Path, optional
+        File Piff reads (default the image's own file; `DataFit` passes the working copy in
+        GalSim's frame).
 
     Returns
     -------
     dict
     """
-    inp = image.piff_input()
+    inp = image.piff_input(image_file)
     inp.update(cat_file_name=str(Path(catalog_file).resolve()), cat_hdu=1, x_col="x",
                y_col="y", stamp_size=int(stamp_size),
                property_cols=catalog.property_cols(piff_catalog))
     if "gain" in piff_catalog.colnames:
         inp["gain_col"] = "gain"
     return inp
+
+
+def uses_roman_optics(psf_config):
+    """True if a Piff ``psf`` config dict contains a ``RomanOptics`` component."""
+    if isinstance(psf_config, dict):
+        return (psf_config.get("type") == "RomanOptics"
+                or any(uses_roman_optics(v) for v in psf_config.values()))
+    if isinstance(psf_config, (list, tuple)):
+        return any(uses_roman_optics(v) for v in psf_config)
+    return False
 
 
 def select_stars(select_config, objects, base, logger):
@@ -457,7 +482,8 @@ class DataFitResult:
         """Save to a folder: ``psf.fits`` (Piff), ``stars.fits``, ``selection.fits``,
         ``moments.fits`` (if computed), ``config.yaml`` (run settings incl. the Piff config,
         fit summary, checks, provenance). `DataFit.run` also writes ``catalog.fits``,
-        ``piff.yaml`` and, for an in-memory catalog, ``detections.fits`` there."""
+        ``piff.yaml``, the working copy ``image_galsim_frame.fits`` (``frame='science'``)
+        and, for an in-memory catalog, ``detections.fits`` there."""
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
         self.psf.write(str(path / "psf.fits"))
@@ -474,8 +500,9 @@ class DataFitResult:
 def load_data_fit(path):
     """Load a `DataFitResult` saved by `DataFit.run`.
 
-    The image file must still be at its recorded path; the Piff catalog is read from the
-    folder (so the folder can be moved).
+    The Piff catalog and, for ``frame='science'`` images, the flipped working copy are read
+    from the folder (so the folder can be moved); a ``frame='galsim'`` image must still be at
+    its recorded path.
 
     Parameters
     ----------
@@ -490,6 +517,8 @@ def load_data_fit(path):
     saved = read_yaml(path / "config.yaml")
     config = saved["config"]
     config["piff"]["input"]["cat_file_name"] = str((path / "catalog.fits").resolve())
+    if (path / FIT_COPY_NAME).exists():
+        config["piff"]["input"]["image_file_name"] = str((path / FIT_COPY_NAME).resolve())
     psf = piff.read(str(path / "psf.fits"))
     table = Table.read(path / "stars.fits")
     selection = Table.read(path / "selection.fits")

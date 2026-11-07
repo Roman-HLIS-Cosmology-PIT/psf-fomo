@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("ngmix")  # gauss and wmom are ngmix measurements
 
-from l2files import field, write_field
-from psf_fomo.datafit import DataFit, L2Image, StarCatalog, plot_size_mag
+from l2files import field, open_l2, write_field
+from psf_fomo.datafit import DataFit, StarCatalog, plot_size_mag
 from psf_fomo.piffval import FitConfig
 
 ABZP = 26.0  # sep_catalog's zero point
@@ -30,7 +30,7 @@ def measured(mixed):
     image, catalog, _ = mixed
     cat = StarCatalog(catalog)
     cat.set_cuts(clean_only=False)
-    return cat.measure(L2Image(image), algorithms=("gauss", "wmom"), wmom_fwhm=(0.4, 0.6),
+    return cat.measure(open_l2(image), algorithms=("gauss", "wmom"), wmom_fwhm=(0.4, 0.6),
                        preview_selection=True)
 
 
@@ -70,7 +70,7 @@ def test_preview_matches_the_fit_selection(measured, mixed, tmp_path):
     image, catalog, _ = mixed
     cat = StarCatalog(catalog)      # same default selection (SizeMag) and cuts as `measured`
     cat.set_cuts(clean_only=False)
-    res = DataFit(L2Image(image), cat, FitConfig.from_piff_config(CHEAP)).run(save_to=tmp_path)
+    res = DataFit(open_l2(image), cat, FitConfig.from_piff_config(CHEAP)).run(save_to=tmp_path)
     sel = res.selection[res.selection["on_image"]]
     by_id = {int(i): (bool(c), bool(s)) for i, c, s in zip(sel["id"], sel["candidate"],
                                                             sel["star"])}
@@ -84,7 +84,7 @@ def test_preview_matches_the_fit_selection(measured, mixed, tmp_path):
 def test_subsets(mixed):
     image, catalog, _ = mixed
     cat = StarCatalog(catalog)
-    img = L2Image(image)
+    img = open_l2(image)
     t = cat.measure(img, mag_range=(17.0, 18.5))
     assert len(t) > 0 and np.all((t["mag"] >= 17.0) & (t["mag"] <= 18.5))
     assert "candidate" not in t.colnames and "T_gauss" in t.colnames

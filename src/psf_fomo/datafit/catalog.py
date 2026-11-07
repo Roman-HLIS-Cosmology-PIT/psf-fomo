@@ -194,7 +194,7 @@ class StarCatalog:
                 out[key] = self.cuts[key]
         return out
 
-    def piff_table(self, image=None, stamp_size=25):
+    def piff_table(self, image=None, stamp_size=25, fit_frame=True):
         """The catalog as Piff reads it.
 
         Columns: ``x``, ``y`` (GalSim / Piff convention, 1-based), ``id``, and when available
@@ -204,12 +204,19 @@ class StarCatalog:
         e⁻ per DN/s; where undefined, the image median). Rows with non-finite positions are
         dropped.
 
+        With an `L2Image` whose frame needs a flip (real L2 files, ``frame='science'``) and
+        ``fit_frame``, ``x``, ``y`` are in the fit (GalSim) frame, matching the flipped
+        working copy, and ``x_l2``, ``y_l2`` keep the positions in the file (1-based).
+
         Parameters
         ----------
         image : L2Image, optional
-            Needed for the ``gain`` column.
+            Needed for the ``gain`` column and the frame.
         stamp_size : int
             Stamp size for the gain median, pixels. Default 25.
+        fit_frame : bool
+            Positions in the fit frame (default; for `DataFit`). False: in the file's own frame
+            (for measurements on the original file).
 
         Returns
         -------
@@ -237,10 +244,14 @@ class StarCatalog:
             if name not in out.colnames:
                 out[name] = np.asarray(t[name])[keep]
         if image is not None and image.weights == "model_poisson":
+            # The gain plane is read from the original file: positions in its own frame.
             gain = image.gain_at(out["x"], out["y"], stamp_size)
             valid = image.array("gain")
             fallback = float(np.median(valid[np.isfinite(valid) & (valid > 0)]))
             out["gain"] = np.where(np.isfinite(gain), gain, fallback)
+        if image is not None and fit_frame and image.flip is not None:
+            out["x_l2"], out["y_l2"] = out["x"].copy(), out["y"].copy()
+            out["x"], out["y"] = image.to_fit_frame(out["x_l2"], out["y_l2"])
         return out
 
     def measure(self, image, algorithms=("gauss",), wmom_fwhm=(0.4,), stamp_size=25,
@@ -261,7 +272,8 @@ class StarCatalog:
                                max_objects, preview_selection, verbose)
 
     def property_cols(self, table):
-        """Columns of `piff_table` that Piff should carry as star properties."""
+        """Columns of `piff_table` that Piff should carry as star properties (incl. ``x_l2``,
+        ``y_l2`` when present)."""
         return [name for name in table.colnames if name not in ("x", "y", "gain")]
 
     def config(self):
