@@ -3,7 +3,26 @@ import datetime
 import platform
 from pathlib import Path
 
+import numpy as np
 import yaml
+
+
+def to_plain(value):
+    """``value`` with NumPy scalars and arrays turned into plain Python types, recursively.
+
+    NumPy scalars → ``int`` / ``float`` / ``bool`` / ``str``; arrays and tuples → lists;
+    dicts and lists are converted item by item. YAML's safe dumper accepts only plain types,
+    and NumPy values reach configs easily (e.g. a catalog's ``meta``).
+    """
+    if isinstance(value, dict):
+        return {to_plain(k): to_plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_plain(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return to_plain(value.tolist())
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 def write_yaml(path, data):
@@ -14,10 +33,11 @@ def write_yaml(path, data):
     path : str or Path
         Output file name.
     data : dict
-        Data made of plain Python types (dict, list, str, int, float, bool, None).
+        Data of plain Python types (dict, list, str, int, float, bool, None); NumPy scalars,
+        arrays and tuples are converted first (`to_plain`).
     """
     with open(path, "w") as f:
-        yaml.safe_dump(data, f, sort_keys=False)
+        yaml.safe_dump(to_plain(data), f, sort_keys=False)
 
 
 def read_yaml(path):

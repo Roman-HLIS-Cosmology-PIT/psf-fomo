@@ -126,6 +126,26 @@ def test_catalog_from_table(stars_only, tmp_path):
     assert again.header == from_table.header
 
 
+def test_table_catalog_with_numpy_meta_saves(stars_only, tmp_path):
+    # A table from a Python detection step can carry NumPy scalars in its meta (a real run
+    # failed to save config.yaml on np.float64 ABZP): the header is plain, the fit saves.
+    image, catalog, _ = stars_only
+    table = Table.read(catalog)
+    table.meta = {"ABZP": np.float64(25.775), "SKY": np.float32(2.0), "NMATCH": np.int64(50)}
+    cat = StarCatalog(table)
+    assert cat.header == {"ABZP": 25.775, "SKY": 2.0, "NMATCH": 50}
+    assert all(type(v) in (float, int) for v in cat.header.values())
+    cat.select_stars("all")
+    cat.set_cuts(clean_only=False)
+    fit = DataFit(open_l2(image), cat, gaussian_config())
+    fit.set_diagnostics(moments=False)
+    res = fit.run(save_to=tmp_path)
+    saved = read_yaml(tmp_path / "config.yaml")
+    assert saved["config"]["catalog"]["header"]["ABZP"] == 25.775
+    again = load_data_fit(tmp_path)
+    assert list(again.table["star_id"]) == list(res.table["star_id"])
+
+
 def test_catalog_errors(stars_only, tmp_path):
     _, catalog, _ = stars_only
     with pytest.raises(ValueError, match="columns"):

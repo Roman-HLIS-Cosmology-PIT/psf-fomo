@@ -30,6 +30,8 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 
+from ..io import to_plain
+
 PIFF_ID = "id"          # star id property in Piff (the catalog's id column, renamed)
 PIFF_CLEAN = "clean"    # clean property in Piff (0/1)
 SELECT_METHODS = ("sizemag", "all", "column")   # 'locus' is set by select_locus
@@ -87,7 +89,8 @@ class StarCatalog:
             self.path = Path(catalog).resolve()
             self.table = Table.read(self.path, hdu=self.hdu)
             meta = fits.getheader(self.path, self.hdu)
-        self.header = {k: meta[k] for k in HEADER_KEYS if k in meta}
+        # Plain Python values: a table's meta may hold NumPy scalars (they would not save).
+        self.header = {k: to_plain(meta[k]) for k in HEADER_KEYS if k in meta}
         self.columns = {"id": id_col, "x": x_col, "y": y_col, "flux": flux_col,
                         "size": size_col, "clean": clean_col}
         self.extra_cols = list(extra_cols)
