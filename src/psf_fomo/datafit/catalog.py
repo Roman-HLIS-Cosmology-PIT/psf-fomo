@@ -14,10 +14,16 @@ neighbour (galaxies and unclean objects included). Which objects are stars is a 
   native H158 stamps (CLAUDE.md §9.8), so the selection runs with ``gauss`` by default.
 - ``'all'``: every detection.
 - ``'column'``: a flag column of the catalog (Piff ``Flag``).
+- ``'locus'``: our own stellar-locus selection (`StarCatalog.select_locus`, module
+  `psf_fomo.datafit.locus`) on a pre-fit measurement table; the chosen stars become a 0/1
+  column ``psf_locus`` that Piff's ``Flag`` selection reads. For catalogs that are already
+  star lists (e.g. Gaia matches), where SizeMag (built to separate stars from galaxies) does
+  not apply.
 
 Then Piff's cuts (`StarCatalog.set_cuts`), applied after the star selection; ``clean_only``
 adds ``clean == 0`` to Piff's ``reject_where``.
 """
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +32,8 @@ from astropy.table import Table
 
 PIFF_ID = "id"          # star id property in Piff (the catalog's id column, renamed)
 PIFF_CLEAN = "clean"    # clean property in Piff (0/1)
-SELECT_METHODS = ("sizemag", "all", "column")
+SELECT_METHODS = ("sizemag", "all", "column")   # 'locus' is set by select_locus
+LOCUS_COLUMN = "psf_locus"   # 0/1 column of the stars chosen by select_locus
 HEADER_KEYS = ("SKY", "DETCFG", "MATCHRAD", "OBSTIME", "NMATCH", "ABZP")
 SHAPE_METHODS = ("hsm", "gauss", "am", "wmom")
 DEFAULT_CUTS = {"clean_only": True, "min_snr": None, "min_sep": None, "max_mask_pixels": None,
@@ -131,6 +138,51 @@ class StarCatalog:
         self.selection = {"method": method, "shape_method": shape_method,
                           "options": dict(options)}
 
+    def select_locus(self, measured, **settings):
+        """Select the PSF stars with our stellar-locus selection, replacing Piff's star finder.
+
+        Runs `psf_fomo.datafit.locus.select_locus` on a `measure` table of this catalog and
+        makes the chosen stars the selection: a 0/1 column ``psf_locus`` read by Piff's
+        ``Flag`` selection (Piff's cuts and reserve still apply). Stars not in ``measured``
+        (no stamp) are not selected. The settings, the summary and the selected ids are kept
+        in the selection (`config`), so `from_config` rebuilds the same selection.
+
+        Parameters
+        ----------
+        measured : astropy.table.Table
+            `StarCatalog.measure` output for this catalog (e.g. ``algorithms=("wmom",)``).
+        **settings
+            `select_locus` parameters (``size``, ``order``, ``k``, ``mag``, ``mag_max``,
+            ``bright_limit``, ``mag_bin``, ``sat_sigma``, ``sat_bins``, ``min_bin_count``).
+
+        Returns
+        -------
+        LocusResult
+            ``.table`` (per-star reason), ``.summary``, ``.bins``, ``.plot()``.
+
+        Example
+        -------
+        >>> t = cat.measure(img, algorithms=("wmom",))
+        >>> res = cat.select_locus(t)          # defaults: T_wmom_0.4, order 1, k 3
+        >>> res.summary; res.plot()
+        >>> cat.set_cuts(min_snr=50, min_sep=2.5)
+        """
+        from .locus import select_locus
+        ids = np.asarray(self.table[self.columns["id"]])
+        unknown = set(np.asarray(measured[PIFF_ID]).tolist()) - set(ids.tolist())
+        if unknown:
+            raise ValueError(f"{len(unknown)} measured ids are not in this catalog: was the "
+                             "table measured from another catalog?")
+        result = select_locus(measured, **settings)
+        chosen = result.selected_ids
+        self.table[LOCUS_COLUMN] = np.isin(ids, chosen).astype(int)
+        self.selection = {"method": "locus",
+                          "shape_method": self.selection.get("shape_method", "gauss"),
+                          "options": {"flag_name": LOCUS_COLUMN, "use_flag": 1},
+                          "locus": {"settings": dict(settings), "summary": result.summary,
+                                    "ids": chosen}}
+        return result
+
     def set_cuts(self, clean_only=True, min_snr=None, min_sep=None, max_mask_pixels=None,
                  max_edge_frac=None, stamp_center_size=None, max_pixel_cut=None,
                  reject_where=None, nstars=None, max_snr_weight=None):
@@ -179,7 +231,8 @@ class StarCatalog:
         dict
         """
         method = self.selection["method"]
-        out = {"type": {"sizemag": "SizeMag", "all": "Flag", "column": "Flag"}[method]}
+        out = {"type": {"sizemag": "SizeMag", "all": "Flag", "column": "Flag",
+                        "locus": "Flag"}[method]}
         out.update(self.selection["options"])
         rejects = []
         if self.cuts["clean_only"]:
@@ -282,7 +335,7 @@ class StarCatalog:
         return {"path": None if self.path is None else str(self.path), "hdu": self.hdu,
                 "columns": dict(self.columns),
                 "zero_based": self.zero_based, "extra_cols": list(self.extra_cols),
-                "header": dict(self.header), "selection": dict(self.selection),
+                "header": dict(self.header), "selection": copy.deepcopy(self.selection),
                 "cuts": dict(self.cuts)}
 
     @classmethod
@@ -295,5 +348,8 @@ class StarCatalog:
         cat = cls(source, config["hdu"], c["id"], c["x"], c["y"],
                   config["zero_based"], c["flux"], c["size"], c["clean"], config["extra_cols"])
         cat.selection = dict(config["selection"])
+        if cat.selection["method"] == "locus":
+            ids = np.asarray(cat.table[c["id"]])
+            cat.table[LOCUS_COLUMN] = np.isin(ids, cat.selection["locus"]["ids"]).astype(int)
         cat.cuts = dict(config["cuts"])
         return cat

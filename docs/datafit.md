@@ -224,12 +224,86 @@ plot_size_mag(t)                                   # the catalog's own size (r50
 - **`preview_selection=True`** runs the catalog's Piff selection (selection type, then the
   cuts; no reserve, no fit) and adds `candidate` and `star`: the same choice a `DataFit` with
   this catalog makes. With `mag_range` / `max_objects` the selection sees only that subset
-  (fewer neighbours for `min_sep`, a different locus for SizeMag).
+  (fewer neighbours for `min_sep`, a different locus for SizeMag). Each stage is reported as
+  it is: if the cuts reject every candidate, `candidate` still shows them (with a warning;
+  a fit would stop there), and `t.meta` holds `n_candidates`, `n_stars`, the selection and
+  the cuts. `algorithms=()` runs the preview alone (fast); `verbose=2` prints Piff's log,
+  including how many stars each cut rejects.
+- **Diagnosing an empty selection**: first `t["candidate"].sum()` (the star finder), then
+  the cuts one at a time (`set_cuts(...)` with a single cut, re-run the preview).
+- **SizeMag on real L2 data** (first real file, a catalog trimmed to ≈ 700 Gaia stars,
+  2026-11-06): it found only 7 candidates, all unclean and with masked pixels, which the
+  cuts then removed. How SizeMag works (`Piff/piff/size_mag.py`): a seed from the brightest
+  20 % of objects, their smallest 20 %, the tighter half (15 objects here, as designed),
+  grown within ≈ ±5 % in T (`max_spread`); then a locus fit across the field and a histogram
+  scan from bright to faint that stops at the first "valley" above 1 % of the peak
+  (`impurity`), meant to find where galaxies merge with stars. With a star-only catalog of
+  undersampled stars this goes wrong: the seed comes from the brightest stars (likely
+  saturated: masked, unclean), the ±5 % window is narrower than the native-stamp size
+  scatter, and a single star out of place stops the scan. For star-only catalogs use our
+  own selection (`select_locus`, below) or `select_stars("all")` with cuts.
 - **Cost**: milliseconds per detection and algorithm (gauss is the slowest); use
   `mag_range` or `max_objects` (brightest by catalog flux) for large catalogs.
 - `plot_size_mag(table, algorithm=None, size="T"|"sigma", mag="catalog"|"measured")` also
   takes `DataFitResult.selection` (catalog size only); flagged measurements are left out and
   counted in the title.
+
+## Our own stellar-locus selection (`StarCatalog.select_locus`)
+
+For catalogs that are already star lists (e.g. trimmed to Gaia stars), where the question is
+which stars are usable rather than which objects are stars. Replaces Piff's star finder only;
+Piff's cuts and reserve still apply afterwards.
+
+```python
+t = cat.measure(img, algorithms=("wmom",))          # sizes T_wmom_0.4
+res = cat.select_locus(t)                           # size="T_wmom_0.4", order=1, k=3
+res.summary                                         # counts, saturation limit, width, ...
+res.table                                           # per star: size, size_ref, resid, reason
+res.plot()                                          # size–mag, residual–mag + scan, map
+cat.set_cuts(min_snr=50, min_sep=2.5, max_mask_pixels=5)
+fit = DataFit(img, cat, cfg)                        # fits the selected stars
+```
+
+Steps; each star ends with one `reason`:
+
+1. `flagged`: the size measurement failed, or size / magnitude not finite.
+2. `faint`: fainter than `mag_max` (optional, default none).
+3. **Locus centre**: log(size) fitted as a polynomial of order `order` in the normalised SCA
+   position (0 constant; **1 plane, default**; 2 quadratic), with clipping at `k` × width
+   around the median residual (so a few large outliers cannot drag the fit off a tight locus;
+   if clipping leaves fewer stars than polynomial terms, a clear error).
+   The PSF size varies across an SCA; a field-dependent centre keeps the band equally fair
+   everywhere (a constant centre with a tight band cuts stars where the PSF is larger).
+   Residual = size / centre(x, y) − 1; **width** = robust σ (1.4826 × MAD) of the residuals
+   of all usable stars.
+4. `saturated`: the saturation turn, detected from the data as a *change* of the locus with
+   magnitude. Residuals binned in magnitude (`mag_bin` = 0.25); reference level = the median
+   of the bin medians (a constant offset between the fitted centre and the bin medians, e.g.
+   from a skewed size distribution, cancels). A bin with ≥ `min_bin_count` (3) stars deviates
+   when its median differs from the reference by more than `sat_sigma` (3) × its uncertainty
+   (1.2533 × width / √n) **and** by at least `min_shift` (1) × the locus width (real
+   saturation grows sizes by many widths; this keeps a very tight locus from turning tiny
+   trends into a turn; `min_shift=0` turns it off). The limit is the faint edge of the run of
+   deviating bins (same sign) that extends to the bright end, at least `sat_bins` (2) long;
+   on a flat faint end this is the first departure seen scanning from faint to bright. A turn
+   that would mark more than half of the usable stars is **not applied**
+   (`bright_limit_source = "unclear"`, a warning; `detected_limit` keeps it). `bright_limit=
+   <mag>` sets the limit by hand. The centre is refitted without the saturated stars.
+5. `off_locus`: |residual| > `k` × width (**k = 3**: keeps 99.7 % of a Gaussian locus, so only
+   clear outliers go: binaries, blends, a galaxy among the matches). `summary
+   ["off_locus_fraction"]` should be ≈ 0.3 % plus the real outliers; much more means the
+   locus is not described well (look at the residual map; raise `order`).
+6. `selected`.
+
+- **Size**: `size="T_wmom_0.4"` (default) has the smallest star-to-star scatter on native
+  stamps (CLAUDE.md §9.8); its compression of sizes toward the weight does not matter for a
+  selection. Any `T_<alg>`, `sigma_<alg>` or the catalog `size_cat` can be used. Magnitudes:
+  `mag="mag"` (catalog, default) or `mag_<alg>`.
+- **Result on the catalog**: the selected stars become a 0/1 column `psf_locus` read by
+  Piff's `Flag` selection. The settings, summary and selected ids are saved in the catalog's
+  config (and so with every fit); `StarCatalog.from_config` rebuilds the same selection.
+- `select_locus(table, ...)` (module function) runs the selection without changing a
+  catalog.
 
 ## Running a fit (`DataFit`)
 

@@ -79,6 +79,94 @@ def plot_size_mag(table, algorithm=None, size="T", mag="catalog", ax=None):
     return ax.figure
 
 
+LOCUS_STYLES = {   # same hue order as above; marker shapes differ too
+    "selected": dict(color="#2a78d6", marker="o", s=10, lw=0),
+    "saturated": dict(color="#eb6834", marker="^", s=18, lw=0),
+    "off_locus": dict(color="#1baf7a", marker="s", s=14, lw=0),
+    "faint": dict(color="0.7", marker=".", s=6, lw=0),
+    "flagged": dict(color="0.45", marker="x", s=12, lw=0.8),
+}
+
+
+def plot_locus(result):
+    """Diagnostics of `select_locus`: three panels.
+
+    1. Size vs magnitude, stars by reason, the saturation limit.
+    2. Fractional size residual (to the locus centre at each star's position) vs magnitude,
+       the ±k × width band, and the binned medians of the saturation scan (deviating bins
+       filled) with their uncertainties and the scan's reference level (dotted).
+    3. Residual across the SCA for the stars kept in the locus (selected + off-locus): a
+       remaining trend means the locus ``order`` is too low.
+
+    Parameters
+    ----------
+    result : LocusResult
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    t, s, bins = result.table, result.summary, result.bins
+    fig, axes = plt.subplots(1, 3, figsize=(17, 4.8))
+    reasons = np.asarray(t["reason"])
+    limit = s["bright_limit"]
+    band = s["k"] * s["width"]
+
+    ax = axes[0]
+    for name, style in LOCUS_STYLES.items():
+        m = reasons == name
+        if m.any():
+            ax.scatter(t["mag"][m], t["size"][m], label=f"{name}: {int(m.sum())}", **style)
+    ax.set_yscale("log")
+    ax.set_xlabel(s["mag"])
+    ax.set_ylabel(s["size"])
+    ax.set_title("size vs magnitude")
+
+    ax = axes[1]
+    for name in ("selected", "saturated", "off_locus"):
+        m = reasons == name
+        if m.any():
+            ax.scatter(t["mag"][m], t["resid"][m], **LOCUS_STYLES[name])
+    ax.axhspan(-band, band, color="0.9", zorder=0, label=f"±{s['k']:g} × width")
+    used = np.asarray(bins["used"], dtype=bool)
+    centres = 0.5 * (np.asarray(bins["mag_lo"]) + np.asarray(bins["mag_hi"]))
+    dev = np.asarray(bins["deviates"], dtype=bool)
+    for sel, face, label in ((used & ~dev, "white", "bin median"),
+                             (used & dev, "k", "bin median, deviates")):
+        if sel.any():
+            ax.errorbar(centres[sel], np.asarray(bins["median"])[sel],
+                        yerr=np.asarray(bins["uncertainty"])[sel], fmt="o", mfc=face,
+                        mec="k", ecolor="k", ms=5, capsize=2, label=label)
+    ax.axhline(0, color="0.5", lw=0.8)
+    ax.axhline(s["scan_reference"], color="k", ls=":", lw=1, label="scan reference")
+    lim = max(3 * band, np.nanpercentile(np.abs(t["resid"][reasons != "flagged"]), 99))
+    ax.set_ylim(-lim, lim)
+    ax.set_xlabel(s["mag"])
+    ax.set_ylabel("size / locus centre − 1")
+    ax.set_title(f"locus width {s['width']:.4f}, order {s['order']}")
+
+    for ax in axes[:2]:
+        if limit is not None:
+            ax.axvline(limit, color="#eb6834", ls="--", lw=1,
+                       label=f"saturation {limit:.2f} ({s['bright_limit_source']})")
+        ax.legend(fontsize=8, frameon=False)
+
+    ax = axes[2]
+    m = np.isin(reasons, ("selected", "off_locus"))
+    vmax = max(band, 1e-6)
+    sc = ax.scatter(t["x"][m], t["y"][m], c=t["resid"][m], cmap="RdBu_r", vmin=-vmax,
+                    vmax=vmax, s=14)
+    fig.colorbar(sc, ax=ax, label="size / locus centre − 1")
+    ax.set_xlim(0, 4089)
+    ax.set_ylim(0, 4089)
+    ax.set_aspect("equal")
+    ax.set_xlabel("x [pix]")
+    ax.set_ylabel("y [pix]")
+    ax.set_title("residual across the SCA")
+    fig.tight_layout()
+    return fig
+
+
 def _column(table, name):
     if name not in table.colnames:
         raise ValueError(f"column {name!r} not in the table (have: {table.colnames})")

@@ -81,6 +81,20 @@ def test_preview_matches_the_fit_selection(measured, mixed, tmp_path):
     assert measured["star"].sum() > 0
 
 
+def test_preview_reports_each_stage(mixed):
+    # Cuts that reject every candidate: the candidates are still reported (Piff would stop
+    # with "All stars were rejected"), with a warning and the counts in meta.
+    image, catalog, _ = mixed
+    cat = StarCatalog(catalog)
+    cat.select_stars("all")
+    cat.set_cuts(clean_only=False, reject_where="flux_cat > 0")
+    with pytest.warns(UserWarning, match="rejected all"):
+        t = cat.measure(open_l2(image), algorithms=(), preview_selection=True)
+    assert t["candidate"].all() and not t["star"].any()
+    assert t.meta["n_candidates"] == len(t) and t.meta["n_stars"] == 0
+    assert t.meta["selection"]["method"] == "all"
+
+
 def test_subsets(mixed):
     image, catalog, _ = mixed
     cat = StarCatalog(catalog)

@@ -70,7 +70,10 @@ def measure_objects(image, catalog, algorithms=("gauss",), wmom_fwhm=(DEFAULT_WM
         ``e2_<a>``, ``flux_<a>`` [DN/s], ``mag_<a>`` (``ABZP`` − 2.5 log10 ``flux_<a>``;
         instrumental −2.5 log10 without ``ABZP``; NaN for flux ≤ 0), ``flag_<a>``; with
         ``preview_selection`` also ``candidate`` and ``star``. ``meta`` holds the settings
-        and counts (``n_catalog``, ``n_measured``).
+        and counts (``n_catalog``, ``n_measured``; with the preview ``n_candidates``,
+        ``n_stars``, ``selection``, ``cuts``). Each preview stage is reported as it is:
+        when the cuts reject every candidate, ``candidate`` still shows them (a warning says
+        so); ``algorithms=()`` runs the preview without measuring.
 
     Example
     -------
@@ -108,6 +111,10 @@ def measure_objects(image, catalog, algorithms=("gauss",), wmom_fwhm=(DEFAULT_WM
     out.meta.update(n_catalog=len(catalog.table), n_measured=len(out),
                     stamp_size=int(stamp_size), image=str(image.path),
                     algorithms=[algorithm_label(a, f) for a, f in labels])
+    if preview_selection:
+        out.meta.update(n_candidates=int(out["candidate"].sum()),
+                        n_stars=int(out["star"].sum()),
+                        selection=dict(catalog.selection), cuts=dict(catalog.cuts))
     return out
 
 
@@ -141,15 +148,21 @@ def _measure(obj, labels):
 
 
 def _preview(catalog, objects, base, logger):
-    """Ids picked by the selection type (``candidate``) and kept by the cuts (``star``)."""
+    """Ids picked by the selection type (``candidate``) and kept by the cuts (``star``).
+
+    Each stage is reported as it is: when the cuts reject every candidate, the candidates are
+    still returned (Piff itself would stop with an error there). Warns when a stage is empty.
+    """
     from .fit import select_stars
     select = catalog.piff_select()
-    try:
-        with piff_shape_method(catalog.selection["shape_method"]):
-            candidates, stars = select_stars(select, objects, dict(base, select=select), logger)
-    except RuntimeError as err:  # Piff found no stars at one of the two stages
-        warnings.warn(f"selection preview: {err}")
-        return {"candidate": set(), "star": set()}
+    with piff_shape_method(catalog.selection["shape_method"]):
+        candidates, stars = select_stars(select, objects, dict(base, select=select), logger,
+                                         allow_empty=True)
+    if not candidates:
+        warnings.warn("selection preview: the star finder selected no candidates "
+                      f"({catalog.selection['method']})")
+    elif not stars:
+        warnings.warn(f"selection preview: the cuts rejected all {len(candidates)} candidates")
     return {"candidate": {int(s.data.properties[PIFF_ID]) for s in candidates},
             "star": {int(s.data.properties[PIFF_ID]) for s in stars}}
 

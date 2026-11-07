@@ -289,20 +289,26 @@ def uses_roman_optics(psf_config):
     return False
 
 
-def select_stars(select_config, objects, base, logger):
+def select_stars(select_config, objects, base, logger, allow_empty=False):
     """Piff's ``Select.process`` (piff/select.py), keeping the stars of the first stage.
 
     Returns (candidates, stars): the objects the selection type picked (e.g. SizeMag's
     stellar locus) and the final stars after the rejection cuts, with reserve marked.
+    Like Piff, raises RuntimeError when a stage leaves no stars, unless ``allow_empty``
+    (for the selection preview, which reports each stage as it is).
     """
     select_config = copy.deepcopy(select_config)
     handler = piff.Select.valid_select_types[select_config.get("type", "Flag")](
         select_config, base, logger=logger)
     candidates = handler.selectStars(objects, logger)
     if len(candidates) == 0:
+        if allow_empty:
+            return [], []
         raise RuntimeError("No stars were selected.")
     stars = handler.rejectStars(candidates, logger, objects=objects)
     if len(stars) == 0:
+        if allow_empty:
+            return candidates, []
         raise RuntimeError("All stars were rejected.")
     handler.reserveStars(stars, logger)
     return candidates, stars
