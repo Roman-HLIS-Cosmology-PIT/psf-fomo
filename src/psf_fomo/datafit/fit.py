@@ -13,6 +13,13 @@ stage is kept:
 
 ``piff.yaml`` also runs with Piff's ``piffify`` (one shape method for selection and fit there).
 
+Telescope attitude (`DataFit.set_attitude`): with a RomanOptics model and an image whose
+pointing is known (`L2Image.attitude`), the boresight and V3 position angle are written into
+the RomanOptics config (``boresight_ra``, ``boresight_dec``, ``telescope_pa``, degrees), so
+GalSim orients the optical PSF from the telescope attitude instead of the WCS. This needs a
+GalSim whose ``roman.getPSF`` takes ``boresight`` / ``telescope_PA`` and a Piff whose
+RomanOptics takes these options (`attitude_support`).
+
 Example
 -------
 >>> from psf_fomo.piffval import FitConfig
@@ -25,7 +32,9 @@ Example
 >>> res.fit_summary["chisq_dof"], res.summary(), res.moment_summary()
 """
 import copy
+import inspect
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -82,6 +91,57 @@ class DataFit:
         self.reserve = {"frac": 0.0, "seed": 0}
         self.diagnostics = copy.deepcopy(DEFAULT_DIAGNOSTICS)
         self.verbose = 0
+        self.use_attitude = "auto"
+
+    def set_attitude(self, use="auto"):
+        """Whether RomanOptics is oriented by the telescope attitude (see the module docstring).
+
+        Parameters
+        ----------
+        use : {'auto', True, False}
+            ``'auto'`` (default): use it when the model has RomanOptics, the image's attitude
+            is known and the installed GalSim and Piff support it; otherwise (warning if only
+            the software is missing) GalSim orients the PSF from the WCS. True: require it
+            (`run` raises if it cannot be used). False: never use it (WCS orientation).
+        """
+        if use != "auto" and not isinstance(use, bool):
+            raise ValueError("use must be 'auto', True or False")
+        self.use_attitude = use
+
+    def attitude(self, warn=True):
+        """The attitude this run passes to RomanOptics, or None (WCS orientation).
+
+        Returns
+        -------
+        dict or None
+            ``boresight_ra``, ``boresight_dec``, ``telescope_pa`` (degrees).
+
+        Raises
+        ------
+        ValueError, RuntimeError
+            With ``set_attitude(True)``: no attitude for the image, or no support in the
+            installed GalSim / Piff.
+        """
+        if self.use_attitude is False or not uses_roman_optics(
+                self.fit_config.piff_config(self.image.filter_name)):
+            return None
+        values = self.image.attitude
+        if values is None:
+            if self.use_attitude is True:
+                raise ValueError(f"set_attitude(True), but {self.image.path.name} has no "
+                                 "RA_V1, DEC_V1, PA_V3 in its PRIMARY header; pass "
+                                 "L2Image(..., pointing=meta.pointing)")
+            return None
+        missing = attitude_support()
+        if missing:
+            message = "orienting RomanOptics by the telescope attitude needs " + " and ".join(
+                missing)
+            if self.use_attitude is True:
+                raise RuntimeError(message)
+            if warn:
+                warnings.warn(message + "; the PSF is oriented from the WCS instead")
+            return None
+        return dict(values)
 
     def set_stamp_size(self, size=25):
         """Stamp side in native pixels (Piff's ``stamp_size``). Default 25."""
@@ -166,9 +226,12 @@ class DataFit:
         select = self.catalog.piff_select()
         select.update(reserve_frac=self.reserve["frac"], seed=self.reserve["seed"])
         shape = self.fit_config.config["shape_method"]
+        psf = self.fit_config.piff_config(self.image.filter_name)
+        attitude = self.attitude(warn=False)
+        if attitude is not None:
+            add_attitude(psf, attitude)
         config = {"modules": ["psf_fomo.models"], "input": inp, "select": select,
-                  "psf": self.fit_config.piff_config(self.image.filter_name),
-                  "shape_method": shape["method"]}
+                  "psf": psf, "shape_method": shape["method"]}
         if shape["weight_fwhm"] is not None:
             config["shape_weight_fwhm"] = shape["weight_fwhm"]
         return config
@@ -178,7 +241,7 @@ class DataFit:
         return {"name": self.name, "sca": self.image.sca, "image": self.image.config(),
                 "catalog": self.catalog.config(), "stamp_size": self.stamp_size,
                 "reserve": dict(self.reserve), "diagnostics": copy.deepcopy(self.diagnostics),
-                "fit": copy.deepcopy(self.fit_config.config)}
+                "fit": copy.deepcopy(self.fit_config.config), "attitude": self.use_attitude}
 
     def run(self, save_to):
         """Check the image, select stars, fit, compute the diagnostics, save.
@@ -202,9 +265,12 @@ class DataFit:
         # Only RomanOptics depends on the pixel frame (GalSim's aberration field at the star's
         # pixel position); other models are built on the sky through the WCS.
         strict = uses_roman_optics(psf_config)
+        attitude = self.attitude()      # first: set_attitude(True) fails before any work
         checks = {"weights_ratio": self.image.check_weights(),
                   "orientation": self.image.check_orientation(strict=strict),
-                  "nonfinite": self.image.check_finite()}
+                  "nonfinite": self.image.check_finite(),
+                  "attitude": {"requested": self.use_attitude, "used": attitude is not None,
+                               "values": attitude}}
         image_file = self.image.write_fit_copy(save_to / FIT_COPY_NAME)
         piff_catalog = self.catalog.piff_table(self.image, self.stamp_size)
         catalog_file = save_to / "catalog.fits"
@@ -289,6 +355,41 @@ def uses_roman_optics(psf_config):
     return False
 
 
+def add_attitude(psf_config, attitude):
+    """Add the attitude options to every ``RomanOptics`` block of a Piff ``psf`` config, in place."""
+    if isinstance(psf_config, dict):
+        if psf_config.get("type") == "RomanOptics":
+            psf_config.update(attitude)
+        for value in psf_config.values():
+            add_attitude(value, attitude)
+    elif isinstance(psf_config, (list, tuple)):
+        for value in psf_config:
+            add_attitude(value, attitude)
+
+
+def attitude_support():
+    """What the installed software lacks for attitude-oriented RomanOptics (empty: nothing).
+
+    GalSim: ``galsim.roman.getPSF`` must accept ``boresight`` and ``telescope_PA``. Piff:
+    RomanOptics must accept ``boresight_ra``, ``boresight_dec``, ``telescope_pa``.
+
+    Returns
+    -------
+    list of str
+    """
+    import galsim.roman
+    from piff.roman.roman_psf import RomanOpticalModel
+
+    missing = []
+    if not {"boresight", "telescope_PA"} <= set(inspect.signature(galsim.roman.getPSF).parameters):
+        missing.append("a GalSim whose roman.getPSF takes boresight and telescope_PA")
+    piff_options = set(inspect.signature(RomanOpticalModel.__init__).parameters)
+    if not {"boresight_ra", "boresight_dec", "telescope_pa"} <= piff_options:
+        missing.append("a Piff whose RomanOptics takes boresight_ra, boresight_dec, "
+                       "telescope_pa")
+    return missing
+
+
 def select_stars(select_config, objects, base, logger, allow_empty=False):
     """Piff's ``Select.process`` (piff/select.py), keeping the stars of the first stage.
 
@@ -348,7 +449,9 @@ class DataFitResult:
         Software versions and creation time.
     checks : dict
         Image checks: ``weights_ratio``, ``orientation``, ``nonfinite`` (``total``:
-        non-finite pixels, cleaned in the working copy; ``unmasked``: of those, not masked).
+        non-finite pixels, cleaned in the working copy; ``unmasked``: of those, not masked),
+        ``attitude`` (``requested``: `DataFit.set_attitude` setting; ``used``: RomanOptics was
+        oriented by the attitude; ``values``: the values passed, degrees, or None).
     selection : astropy.table.Table
         Every detection with ``on_image``, ``candidate``, ``star`` (see `selection_table`).
     moments : astropy.table.Table or None

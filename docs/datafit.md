@@ -48,7 +48,7 @@ L2 images converted from ASDF by the user's converter, one exposure of one SCA p
 
 | HDU | content |
 |---|---|
-| `PRIMARY` | metadata: detector, filter, exposure time |
+| `PRIMARY` | metadata: detector, filter, exposure time; pointing `RA_V1`, `DEC_V1`, `PA_V3` (+ `TARG_RA`, `TARG_DEC`, `PA_APER`), degrees, if the converter copies ASDF `meta.pointing` |
 | `SCI` | optimal-weight slope, DN/s, TAN-SIP WCS (+ `WCSERR`) |
 | `DQ`, `ERR` | copied from the ASDF |
 | `MASK` | 1 = bad |
@@ -74,6 +74,7 @@ img.set_weights("model_poisson")       # default; or "ivar"
 img.set_sky()                          # default: SKYBKG; set_sky(0) subtracts nothing
 img.gain_at(x, y, stamp_size=25)       # median gain in the stamp, e⁻ per DN/s
 img.piff_input()                       # image part of Piff's input field
+img.pointing, img.attitude             # pointing from the header (degrees); attitude or None
 ```
 
 - **Variant**: `'unif'` (default) uses `SCI_UNIF`, `MASK_UNIF`, `IVAR_UNIF`, `GAIN_UNIF`
@@ -105,6 +106,13 @@ img.piff_input()                       # image part of Piff's input field
   only that way.
 - **Coordinates**: GalSim / FITS, pixel centres at 1 … 4088 (the detection catalog's 0-based
   x, y are shifted by +1 when the Piff catalog is written).
+- **Pointing**: `img.pointing` holds the PRIMARY keys `RA_V1`, `DEC_V1`, `PA_V3`, `TARG_RA`,
+  `TARG_DEC`, `PA_APER` (degrees) under the ASDF names (`ra_v1`, ..., `pa_aperture`). For
+  files converted without them, pass the ASDF dict: `L2Image(path, pointing=meta_pointing)`
+  (its values replace the header's; other keys are ignored). `img.attitude` =
+  `{'boresight_ra', 'boresight_dec', 'telescope_pa'}` from `ra_v1`, `dec_v1`, `pa_v3`, or
+  None; `DataFit` uses it to orient RomanOptics (*Telescope attitude*, below). The pointing
+  is saved with the image config.
 
 ## Pixel frames: Roman science frame vs GalSim
 
@@ -145,7 +153,8 @@ comparing the file's WCS with `galsim.roman.getWCS` at the exposure's own pointi
 - **Fits without RomanOptics** (Gaussian, PixelGrid, our kernels with no optics component) do
   not depend on the pixel frame; they also run on the working copy, for uniformity.
 - **Check a file**: `img.compare_frames(pointing)` with the ASDF `meta.pointing` as a dict
-  (`ra_v1`, `dec_v1`, `pa_v3`, `pa_aperture`, `target_ra`, `target_dec`, degrees) returns a
+  (`ra_v1`, `dec_v1`, `pa_v3`, `pa_aperture`, `target_ra`, `target_dec`, degrees; default:
+  `img.pointing`, which then needs all six) returns a
   table per pointing interpretation × candidate mapping. The GalSim convention that matched
   on SCAs 3 and 11 is `world_pos` = target, `PA` = `pa_v3` (`PA_is_FPA=False`), with SCA
   centres within ≈ 1″. Read it in three steps: the matching interpretation has a small
@@ -318,17 +327,42 @@ Steps; each star ends with one `reason`:
 
 `DataFit(image, catalog, fit_config, name=None)`; `set_stamp_size(25)`,
 `set_reserve(frac, seed)` (Piff's `reserve_frac`), `set_diagnostics(...)` (as the simulation
-module, comparisons `'data'` and `'model_os'` only), `set_verbose(level)`; `run(save_to)`.
+module, comparisons `'data'` and `'model_os'` only), `set_verbose(level)`,
+`set_attitude("auto" | True | False)`; `run(save_to)`.
 
 `run` (one exposure, one SCA):
 1. image checks: `check_weights`, `check_orientation` (raises on a mirrored frame),
-   `check_finite`;
+   `check_finite`, and whether the telescope attitude is used (below);
 2. writes `catalog.fits` and `piff.yaml` (full Piff config; also runs with `piffify`, which
    uses one shape method for selection and fit);
 3. Piff Input (all detections) → Piff Select under the selection's shape method (selection
    type, cuts, reserve) → Piff fit under the fit's shape method. These are Piff's own steps of
    `piff.config.process`, called one by one;
 4. star table, fit summary, moments; saves everything to `save_to`.
+
+### Telescope attitude (RomanOptics orientation)
+
+`galsim.roman.getPSF` builds the optical PSF in arcsec along the SCA axes and must rotate it
+onto the sky. Released GalSim applied the whole WCS Jacobian for this, distortion included,
+which drawing with the same WCS then undid (the optical PSF came out fixed in pixels: ≈ 2–4 %
+small in T on SCA 11). A GalSim change (PR branch, not yet released) applies only the
+WCS's rotation and reflection, or, given the telescope attitude (`boresight` = V1 axis,
+`telescope_PA` = position angle of V3), the rotation from the attitude itself; the WCS then
+only maps the PSF onto pixels, so the distortion is applied once.
+
+With a RomanOptics model, `DataFit` writes the image's attitude (`img.attitude`) into the
+RomanOptics block of `piff.yaml` as `boresight_ra`, `boresight_dec`, `telescope_pa`
+(degrees):
+
+- `set_attitude("auto")` (default): when the image has an attitude and the installed GalSim
+  and Piff support it (`attitude_support()` lists what is missing); otherwise RomanOptics is
+  oriented from the WCS (warning when only the software is missing).
+- `set_attitude(True)`: required; `run` raises before doing anything if it cannot be used.
+- `set_attitude(False)`: never (WCS orientation; for comparisons).
+
+`res.checks["attitude"]` records `requested`, `used` and the `values` passed. The flipped
+working copy is still needed: GalSim evaluates the aberrations at `SCA_pos` in its own frame
+and, with an attitude, finds the star's sky position from the same position through the WCS.
 
 ## Results (`DataFitResult`)
 

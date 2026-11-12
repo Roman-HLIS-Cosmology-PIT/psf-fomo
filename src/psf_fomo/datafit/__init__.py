@@ -16,7 +16,7 @@ Shares only truth-free functions with `psf_fomo.piffval` (``FitConfig``, ``fitti
 ``residuals``, ``components``, ``plotting``) and the reference solver.
 """
 from .catalog import StarCatalog
-from .fit import DataFit, DataFitResult, load_data_fit
+from .fit import DataFit, DataFitResult, attitude_support, load_data_fit
 from .l2 import L2Image, compare_frames, flip_axis, flip_wcs_header, galsim_filter_name
 from .locus import LocusResult, select_locus
 from .measure import measure_objects
@@ -27,4 +27,4 @@ __all__ = ["L2Image", "StarCatalog", "DataFit", "DataFitResult", "load_data_fit"
            "measure_objects", "plot_size_mag", "select_locus", "LocusResult", "plot_locus",
            "DataReferenceSolver",
            "reference_from_data_fit", "galsim_filter_name", "compare_frames", "flip_axis",
-           "flip_wcs_header"]
+           "flip_wcs_header", "attitude_support"]

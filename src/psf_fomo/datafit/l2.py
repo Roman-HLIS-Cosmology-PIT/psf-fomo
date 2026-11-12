@@ -2,7 +2,9 @@
 
 Layout (HDUs found by EXTNAME; see ``docs/datafit.md``):
 
-- ``PRIMARY``: metadata (detector, filter, exposure time).
+- ``PRIMARY``: metadata (detector, filter, exposure time) and, when the converter copies the
+  ASDF ``meta.pointing``, the pointing in degrees: ``RA_V1``, ``DEC_V1``, ``PA_V3`` (telescope
+  boresight and V3 position angle) and optionally ``TARG_RA``, ``TARG_DEC``, ``PA_APER``.
 - ``SCI``: optimal-weight slope [DN/s] with the TAN-SIP WCS. ``SCI_UNIF`` = ``SCI`` + ``DUMO``
   (uniform-weight slope).
 - ``MASK`` (1 = bad), ``IVAR`` (1/variance, (DN/s)⁻²), ``GAIN`` (= ``SCI / VAR_POISSON``,
@@ -62,6 +64,9 @@ SCA_KEYS = ("DETECTOR", "SCA", "SCA_NUM")       # PRIMARY keys tried in order
 FILTER_KEYS = ("FILTER", "OPT_ELEM")
 EXPTIME_KEYS = ("EXPTIME", "EFFEXPTM", "EXPOSURE_TIME")
 SKY_KEY = "SKYBKG"
+# PRIMARY keys (degrees, copied by the converter from ASDF meta.pointing) → meta.pointing names.
+POINTING_KEYS = {"RA_V1": "ra_v1", "DEC_V1": "dec_v1", "PA_V3": "pa_v3",
+                 "TARG_RA": "target_ra", "TARG_DEC": "target_dec", "PA_APER": "pa_aperture"}
 N_CHECK_PIXELS = 2000   # at most this many of the brightest source pixels in check_weights
 MIN_CHECK_PIXELS = 20   # fewer source pixels than this: check_weights cannot decide
 MIN_CHECK_SIGMA = 10.0  # a source pixel is this many background σ above the sky
@@ -95,6 +100,12 @@ class L2Image:
         Pixel frame of this file. ``'science'`` (default): Roman's L2 science frame; fits run
         on a copy flipped into GalSim's frame (`flip`, `write_fit_copy`). ``'galsim'``: the
         file is already in GalSim's frame (e.g. a simulation); nothing is flipped.
+    pointing : dict, optional
+        The exposure's pointing in degrees, as ASDF ``meta.pointing`` (keys ``ra_v1``,
+        ``dec_v1``, ``pa_v3``, ``target_ra``, ``target_dec``, ``pa_aperture``; others are
+        ignored). Values given here replace those read from the PRIMARY header
+        (``RA_V1``, ``DEC_V1``, ``PA_V3``, ``TARG_RA``, ``TARG_DEC``, ``PA_APER``); use it for
+        files converted without them.
 
     Attributes
     ----------
@@ -111,6 +122,10 @@ class L2Image:
         Exposure time from the PRIMARY header, if found (s).
     wcs_err : float or None
         ``WCSERR`` of the image header, if present (recorded only).
+    pointing : dict
+        Pointing values found (header, then the ``pointing`` argument), degrees; may be empty.
+    attitude : dict or None
+        Telescope attitude for ``galsim.roman.getPSF`` (see the property).
 
     Example
     -------
@@ -119,7 +134,8 @@ class L2Image:
     >>> img.piff_input()["image_hdu"]
     """
 
-    def __init__(self, path, variant="unif", sca=None, filter_name=None, frame="science"):
+    def __init__(self, path, variant="unif", sca=None, filter_name=None, frame="science",
+                 pointing=None):
         if variant not in VARIANTS:
             raise ValueError(f"variant must be one of {list(VARIANTS)}")
         if frame not in FRAMES:
@@ -157,9 +173,28 @@ class L2Image:
         self.sky_header = float(image_header[SKY_KEY])
         self.wcs_err = float(image_header["WCSERR"]) if "WCSERR" in image_header else None
         self.wcs = galsim.GSFitsWCS(str(self.path), hdu=self.hdus["image"])
+        self.pointing = {name: float(primary[key]) for key, name in POINTING_KEYS.items()
+                         if key in primary}
+        if pointing is not None:
+            self.pointing.update({name: float(pointing[name]) for name in POINTING_KEYS.values()
+                                  if name in pointing})
         self.weights = "model_poisson"
         self.sky = self.sky_header
         self._arrays = {}
+
+    @property
+    def attitude(self):
+        """Telescope attitude for orienting RomanOptics PSFs, or None if not known.
+
+        ``{'boresight_ra', 'boresight_dec', 'telescope_pa'}`` in degrees, from ``ra_v1``,
+        ``dec_v1``, ``pa_v3`` of `pointing` (the names of Piff's RomanOptics options; GalSim's
+        ``getPSF(boresight=..., telescope_PA=...)``).
+        """
+        p = self.pointing
+        if not all(k in p for k in ("ra_v1", "dec_v1", "pa_v3")):
+            return None
+        return {"boresight_ra": p["ra_v1"], "boresight_dec": p["dec_v1"],
+                "telescope_pa": p["pa_v3"]}
 
     @property
     def flip(self):
@@ -425,11 +460,19 @@ class L2Image:
             warnings.warn(problem)
         return out
 
-    def compare_frames(self, pointing, date=None):
+    def compare_frames(self, pointing=None, date=None):
         """Map this file's pixels onto ``galsim.roman``'s SCA frame using the exposure's pointing.
 
         See `compare_frames` (module function). Needs a full-SCA image (4088 × 4088).
+        ``pointing`` defaults to this image's `pointing` (header or constructor), which must
+        then hold all six values.
         """
+        if pointing is None:
+            missing = [k for k in POINTING_KEYS.values() if k not in self.pointing]
+            if missing:
+                raise ValueError(f"pointing values {missing} not known for {self.path.name}; "
+                                 "pass pointing=... (ASDF meta.pointing)")
+            pointing = self.pointing
         return compare_frames(self.wcs, self.sca, self.shape, pointing, date)
 
     def nonfinite(self):
@@ -488,13 +531,14 @@ class L2Image:
                 "filter_name": self.filter_name, "frame": self.frame, "flip": self.flip,
                 "weights": self.weights, "sky": self.sky,
                 "sky_header": self.sky_header, "exptime": self.exptime,
-                "wcs_err": self.wcs_err, "hdus": dict(self.hdus)}
+                "wcs_err": self.wcs_err, "hdus": dict(self.hdus),
+                "pointing": dict(self.pointing)}
 
     @classmethod
     def from_config(cls, config):
         """Rebuild from `config` output."""
         img = cls(config["path"], config["variant"], config["sca"], config["filter_name"],
-                  config.get("frame", "science"))
+                  config.get("frame", "science"), pointing=config.get("pointing"))
         img.set_weights(config["weights"])
         img.set_sky(config["sky"])
         return img

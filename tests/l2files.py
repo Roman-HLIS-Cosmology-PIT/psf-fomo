@@ -136,17 +136,19 @@ def sep_catalog(path, objects, abzp=26.0, sky=2.0, flux_scale=0.95, unclean=()):
 
 
 def write_field(folder, objects, shape=(700, 700), sca=5, sky=2.0, read_var=0.01, gain=250.0,
-                unclean=(), seed=1):
+                unclean=(), seed=1, primary=None):
     """Draw ``objects`` (from `field`), write the L2 file and the SEP-style catalog.
 
-    Returns (image path, catalog path).
+    ``primary``: extra PRIMARY header cards (see `write_l2_file`). The folder is created if
+    needed. Returns (image path, catalog path).
     """
+    folder.mkdir(parents=True, exist_ok=True)
     wcs = roman_wcs(sca=sca)
     sci = scene(wcs, shape=shape, stars=[(o["x"], o["y"], o["flux"], o["profile"])
                                         for o in objects],
                 sky=sky, read_var=read_var, gain=gain, seed=seed)
     image = write_l2_file(folder / "l2.fits", sci, wcs, sca=sca, sky=sky, read_var=read_var,
-                          gain=gain)
+                          gain=gain, primary=primary)
     catalog = sep_catalog(folder / "det.fits", objects, sky=sky, unclean=unclean)
     return image, catalog
 
