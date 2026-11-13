@@ -198,7 +198,13 @@ comparison_table({"Piff": res, "Piff, true centres": out["given"],
 - `comparison_table` columns: `label`, `chisq`, `chisq_dof`, `flux_r`, `flux_tot_r` (NaN for
   real data), `flux_cat_r` (when a real-data result is included), moment residuals of the
   chosen comparison and algorithm, `n_moments`, `converged`. A centred PixelGrid is optimised over the full
-  grid. Only fit stars (not reserve, not flagged) enter χ²; reserve stars are evaluated too.
+  grid. Only fit stars (not reserve, not flagged) enter χ², and only they are drawn during
+  the optimisation; reserve stars are drawn once per reported solution.
+- Speed options of `solve` / `res.reference` / `reference_from_config`: `report="all"`
+  (default; reported solutions include reserve stars) or `"fit"` (only the fit stars: no
+  reserve diagnostics, much faster when most stars are reserve); `given=False` skips the
+  `'given'` solution (one exact evaluation and its moments fewer). `solver.n_draws` counts the
+  model draws.
 - dof = weighted pixels of fit stars − fit stars − free coefficients (Piff: pixels − 3 per
   star). Compare Piff with the optimum through `out["given"]` (Piff's parameters with true
   centres and profiled fluxes, same dof).

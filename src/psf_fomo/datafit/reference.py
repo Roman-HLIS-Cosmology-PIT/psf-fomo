@@ -51,18 +51,18 @@ class DataReferenceSolver(ReferenceSolver):
         rows = diagnostics.catalog_rows(usable, catalog)
         super().__init__(psf, usable, rows, sim=None, freeze=freeze, centers=centers)
 
-    def star_table(self, stars):
-        return diagnostics.star_table(self.psf, stars, self.rows)
+    def star_table(self, stars, rows):
+        return diagnostics.star_table(self.psf, stars, rows)
 
-    def components(self, stars):
-        return component_tables(self.psf, stars, self.rows, truth=False)
+    def components(self, stars, rows):
+        return component_tables(self.psf, stars, rows, truth=False)
 
     def moment_table(self, stars, table, settings):
         return moment_residuals(self.psf, stars, table, sim=None, **settings)
 
 
 def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
-                            moments="same", centers="fitted"):
+                            moments="same", centers="fitted", report="all", given=True):
     """Reference optimum of the model of a `DataFitResult`, starting from Piff's solution.
 
     Parameters
@@ -79,14 +79,20 @@ def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
         of `moment_residuals` settings; None: no moments.
     centers : {'fitted', 'catalog'}
         Held centres. Default Piff's fitted ones.
+    report : {'all', 'fit'}
+        Stars drawn at the reported solutions: all (default) or only the fit stars (much
+        faster with a large reserve fraction; no reserve diagnostics). The optimisation
+        itself always draws only the fit stars.
+    given : bool
+        Also report Piff's solution (``'given'``). Default True.
 
     Returns
     -------
     dict
-        ``'given'``: Piff's parameters with the held centres and profiled fluxes, on the
-        reference's χ² and dof (dof = weighted pixels − fit stars − free coefficients);
-        ``'optimum'``: {start: `ReferenceResult`}, with ``converged`` False when scipy
-        stopped at ``max_nfev``.
+        ``'given'`` (if ``given``): Piff's parameters with the held centres and profiled
+        fluxes, on the reference's χ² and dof (dof = weighted pixels − fit stars − free
+        coefficients); ``'optimum'``: {start: `ReferenceResult`}, with ``converged`` False
+        when scipy stopped at ``max_nfev``.
     """
     stars, _ = result.fitted_stars()
     if moments == "same":
@@ -94,4 +100,5 @@ def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
         moments = ({k: v for k, v in diag.items() if k != "moments"}
                    if diag.get("moments") else None)
     solver = DataReferenceSolver(result.psf, stars, result.selection, freeze, centers)
-    return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments)
+    return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments, report=report,
+                        given=given)

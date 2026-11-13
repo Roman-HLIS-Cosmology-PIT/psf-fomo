@@ -415,6 +415,11 @@ comparison_table({"Piff": res, "Piff, profiled": out["given"],
   (`converged` False when scipy stopped at `max_nfev`).
 - Each solution (`ReferenceResult`) carries the real-data star table, components (no truth)
   and moments (`'data'`, `'model_os'`, with the fit's diagnostics settings by default).
+- **Speed.** The optimisation draws only the fit stars. Each reported solution is drawn once
+  for all stars (`report="all"`, default) and its moments computed. With a large reserve
+  fraction most of the time goes there: `res.reference(starts=("zero",), report="fit",
+  given=False, moments=None)` draws only the fit stars, once per evaluation step, and skips
+  Piff's solution; compute moments afterwards for the solution you keep.
 - Parameters, frozen components, starts and cost as for simulations (`docs/piffval.md`).
   `DataReferenceSolver` (in `psf_fomo.datafit`) is the solver; it differs from the
   simulation one only in the held centres and the truth-free diagnostics.

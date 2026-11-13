@@ -29,8 +29,9 @@ Simplifications:
   `psf_fomo.datafit.reference.DataReferenceSolver`.
 - A centred PixelGrid is optimised over the full grid (Piff restricts it to zero centroid and
   fits the star centre instead); constraints inside a model's ``fit`` are not imposed.
-- Only fit stars (not reserve, not flagged) enter χ²; reserve stars are evaluated at the
-  solution like the others.
+- Only fit stars (not reserve, not flagged) enter χ², so only they are drawn during the
+  optimisation; reserve and flagged stars are drawn at the reported solutions
+  (``report='all'``, default) or not at all (``report='fit'``).
 
 Degrees of freedom: dof = weighted pixels of fit stars − one flux per fit star − free model
 coefficients (CLAUDE.md §5.5). Piff's own dof is pixels − 3 per star.
@@ -84,7 +85,7 @@ class Leaf:
         # Piff's interpolator.
         self.proj_err = float(np.abs(self.K @ self.C_given - self.P_given).max() / scale)
         self.linear = None   # set by the linearity test
-        self.dP = None       # cached derivative images (n, plen, npix) if linear
+        self.dP = None       # cached derivative images (n_fit, plen, npix) if linear
 
     @property
     def nterms(self):
@@ -94,8 +95,10 @@ class Leaf:
     def ncoef(self):
         return self.nterms * self.plen
 
-    def per_star(self, C):
-        return self.K @ C.reshape(self.nterms, self.plen)
+    def per_star(self, C, idx=None):
+        """Per-star parameters of stars ``idx`` (default all) for coefficients C."""
+        K = self.K if idx is None else self.K[idx]
+        return K @ C.reshape(self.nterms, self.plen)
 
 
 def basis_matrix(leaf, stars):
@@ -176,10 +179,14 @@ class ReferenceSolver:
         self.D = np.array([s.image.array.ravel() for s in self.stars], dtype=float)
         self.W = np.array([s.weight.array.ravel() for s in self.stars], dtype=float)
         self.use = np.array([not s.is_reserve and not s.is_flagged for s in self.stars])
-        self.W_fit = self.W * self.use[:, None]  # reserve / flagged stars do not enter χ²
-        self.sw = np.sqrt(self.W_fit)
+        if not self.use.any():
+            raise ValueError("no fit stars (all reserve or flagged)")
+        # Reserve / flagged stars do not enter χ², so the optimisation draws only these.
+        self.fit_idx = np.flatnonzero(self.use)
+        self.sw = np.sqrt(self.W[self.fit_idx])
         self.n, self.npix = self.D.shape
-        self.dof = int(np.count_nonzero(self.W_fit)) - int(self.use.sum()) - self.nfree
+        self.dof = (int(np.count_nonzero(self.W[self.fit_idx])) - len(self.fit_idx)
+                    - self.nfree)
         self.n_draws = 0
         self._cache = None
         self._lin_ref = None
@@ -221,9 +228,10 @@ class ReferenceSolver:
                 j += lf.ncoef
         return Cs
 
-    def per_star_params(self, x):
-        """List over leaves of (n_stars, plen) parameter arrays."""
-        return [lf.per_star(C) for lf, C in zip(self.leaves, self.unpack(x))]
+    def per_star_params(self, x, idx=None):
+        """List over leaves of (len(idx), plen) parameter arrays of stars ``idx`` (default
+        all)."""
+        return [lf.per_star(C, idx) for lf, C in zip(self.leaves, self.unpack(x))]
 
     def _fit_for(self, i, Pi):
         fit = self.base_fits[i]
@@ -244,10 +252,10 @@ class ReferenceSolver:
         return self.psf.drawStar(star).image.array.ravel()
 
     def images(self, x):
-        """(n_stars, npix) unit-flux model images at parameters x."""
+        """(n_fit, npix) unit-flux model images of the fit stars at parameters x."""
         if self._cache is not None and np.array_equal(x, self._cache[0]):
             return self._cache[1]
-        Ps = self.per_star_params(x)
+        Ps = self.per_star_params(x, self.fit_idx)
         if self._lin_ref is not None:
             # Every free component is linear: m = m_ref + Σ_leaves dP · (P − P_ref).
             P_ref, m_ref = self._lin_ref
@@ -256,29 +264,37 @@ class ReferenceSolver:
                 if not lf.frozen:
                     m += np.einsum("nk,nkp->np", Ps[li] - P_ref[li], lf.dP)
         else:
-            m = np.array([self.draw_star(i, [P[i] for P in Ps]) for i in range(self.n)])
+            m = np.array([self.draw_star(i, [P[j] for P in Ps])
+                          for j, i in enumerate(self.fit_idx)])
         self._cache = (x.copy(), m)
         return m
 
-    def profiled(self, m):
-        """Closed-form fluxes of all stars and χ² of the fit stars for model images m."""
-        F = np.sum(self.W * m * self.D, axis=1) / np.sum(self.W * m * m, axis=1)
-        chi2 = float(np.sum(self.W_fit * (self.D - F[:, None] * m) ** 2))
+    def profiled(self, m, idx=None):
+        """Closed-form fluxes of stars ``idx`` (default the fit stars) for their model images
+        m, and χ² of the fit stars among them."""
+        idx = self.fit_idx if idx is None else idx
+        W, D = self.W[idx], self.D[idx]
+        F = np.sum(W * m * D, axis=1) / np.sum(W * m * m, axis=1)
+        use = self.use[idx]
+        chi2 = float(np.sum(W[use] * (D[use] - F[use, None] * m[use]) ** 2))
         return F, chi2
 
     def residual(self, x):
         m = self.images(x)
         F, _ = self.profiled(m)
-        r = [(self.sw * (self.D - F[:, None] * m)).ravel()]
+        r = [(self.sw * (self.D[self.fit_idx] - F[:, None] * m)).ravel()]
         for lf, C in zip(self.leaves, self.unpack(x)):
             if not lf.frozen and lf.prior_sigma is not None:
                 r.append((C / lf.prior_sigma[None, :]).ravel())
         return np.concatenate(r)
 
     def _detect_linearity(self, Ps):
-        """Second-difference test on the first fit star, two parameters per free leaf."""
-        i = int(np.argmax(self.use))
-        Pi = [P[i].copy() for P in Ps]
+        """Second-difference test on the first fit star, two parameters per free leaf.
+
+        ``Ps``: per-star parameters of the fit stars (`per_star_params` with ``fit_idx``).
+        """
+        i = int(self.fit_idx[0])
+        Pi = [P[0].copy() for P in Ps]
         base = self.draw_star(i, Pi)
         for li, lf in enumerate(self.leaves):
             if lf.frozen:
@@ -297,25 +313,26 @@ class ReferenceSolver:
             lf.linear = ok
 
     def _leaf_derivs(self, li, Ps, m):
-        """d(image_i)/d(param_ik) for every star i and parameter k of leaf li (one-sided).
+        """d(image_j)/d(param_jk) for every fit star j and parameter k of leaf li
+        (one-sided); ``Ps`` and ``m`` are those of the fit stars.
 
         Parameters outer, stars inner: RomanOptics shares one vector across stars, and its
         sample-point PSFs are cached for the current vector, so each perturbed vector costs
         one set of getPSF calls for all stars.
         """
         lf = self.leaves[li]
-        dP = np.empty((self.n, lf.plen, self.npix))
+        dP = np.empty((len(self.fit_idx), lf.plen, self.npix))
         for k in range(lf.plen):
-            for i in range(self.n):
-                Pp = [P[i].copy() for P in Ps]
+            for j, i in enumerate(self.fit_idx):
+                Pp = [P[j].copy() for P in Ps]
                 Pp[li][k] += lf.step
-                dP[i, k] = (self.draw_star(i, Pp) - m[i]) / lf.step
+                dP[j, k] = (self.draw_star(i, Pp) - m[j]) / lf.step
         return dP
 
     def jacobian(self, x):
         m = self.images(x)
         F, _ = self.profiled(m)
-        Ps = self.per_star_params(x)
+        Ps = self.per_star_params(x, self.fit_idx)
         if any(lf.linear is None for lf in self.free):
             self._detect_linearity(Ps)
         a = self.sw * m  # model directions per star
@@ -333,11 +350,12 @@ class ReferenceSolver:
             # Column (j, k): d m_i = K[i, j] dP[i, k]. With fluxes profiled the residual
             # Jacobian is −F_i times that direction minus its component along the star's own
             # model image (Kaufman's variable-projection form).
-            V = self.sw[:, None, None, :] * lf.K[:, :, None, None] * dP[:, None, :, :]
+            K = lf.K[self.fit_idx]
+            V = self.sw[:, None, None, :] * K[:, :, None, None] * dP[:, None, :, :]
             coef = np.einsum("np,njkp->njk", a, V) / aa[:, None, None]
             Vp = V - coef[..., None] * a[:, None, None, :]
-            J = -(F[:, None, None, None] * Vp)  # (n, nterms, plen, npix)
-            blocks.append(J.transpose(0, 3, 1, 2).reshape(self.n * self.npix, lf.ncoef))
+            J = -(F[:, None, None, None] * Vp)  # (n_fit, nterms, plen, npix)
+            blocks.append(J.transpose(0, 3, 1, 2).reshape(-1, lf.ncoef))
         rows = [np.hstack(blocks)]
         col = 0
         for lf in self.free:
@@ -350,7 +368,7 @@ class ReferenceSolver:
             self._lin_ref = ([P.copy() for P in Ps], m.copy())
         return np.vstack(rows)
 
-    def evaluate(self, x, label="", moments=None, info=None):
+    def evaluate(self, x, label="", moments=None, info=None, report="all"):
         """Diagnostics of the solution x, drawn exactly (no linearisation).
 
         Parameters
@@ -364,40 +382,55 @@ class ReferenceSolver:
             `moment_table`). Default None = no moment residuals.
         info : dict, optional
             Extra entries for the summary (e.g. optimiser status).
+        report : {'all', 'fit'}
+            Stars drawn and reported: all (default; reserve stars give out-of-sample
+            diagnostics) or only the fit stars (faster with many reserve stars). χ² is the
+            fit stars' either way.
 
         Returns
         -------
         ReferenceResult
         """
-        Ps = self.per_star_params(x)
-        stars = []
-        for i in range(self.n):
-            stars.append(piff.Star(self.stars[i].data, self._fit_for(i, [P[i] for P in Ps])))
+        idx = self._report_idx(report)
+        Ps = self.per_star_params(x, idx)
+        stars = [piff.Star(self.stars[i].data, self._fit_for(i, [P[j] for P in Ps]))
+                 for j, i in enumerate(idx)]
+        self.n_draws += len(stars)
         m = np.array([self.psf.drawStar(s).image.array.ravel() for s in stars])
-        F, chi2 = self.profiled(m)
-        npix = np.count_nonzero(self.W, axis=1)
+        F, chi2 = self.profiled(m, idx)
         final = []
-        for i, s in enumerate(stars):
-            c2 = float(np.sum(self.W[i] * (self.D[i] - F[i] * m[i]) ** 2))
-            final.append(piff.Star(s.data, s.fit.withNew(flux=float(F[i]), chisq=c2,
-                                                         dof=int(npix[i]) - 1)))
-        table = self.star_table(final)
+        for j, (i, s) in enumerate(zip(idx, stars)):
+            c2 = float(np.sum(self.W[i] * (self.D[i] - F[j] * m[j]) ** 2))
+            npix = int(np.count_nonzero(self.W[i]))
+            final.append(piff.Star(s.data, s.fit.withNew(flux=float(F[j]), chisq=c2,
+                                                         dof=npix - 1)))
+        rows = self.rows[idx]
+        table = self.star_table(final, rows)
         summary = {"label": label, "chisq": chi2, "dof": self.dof,
                    "chisq_dof": chi2 / self.dof if self.dof > 0 else float("nan"),
-                   "n_free": self.nfree, "n_fit_stars": int(self.use.sum()),
-                   "centers": self.centers,
+                   "n_free": self.nfree, "n_fit_stars": len(self.fit_idx),
+                   "n_reported": len(idx), "centers": self.centers,
                    "leaves": [leaf_summary(lf) for lf in self.leaves]}
         summary.update(info or {})
         moment_table = None if moments is None else self.moment_table(final, table, moments)
-        return ReferenceResult(final, table, summary, moment_table, self.components(final))
+        return ReferenceResult(final, table, summary, moment_table,
+                               self.components(final, rows))
 
-    def star_table(self, stars):
-        """Star table of a solution (simulation: `piffval.diagnostics.star_table`)."""
-        return diagnostics.star_table(self.psf, stars, self.rows)
+    def _report_idx(self, report):
+        if report == "all":
+            return np.arange(self.n)
+        if report == "fit":
+            return self.fit_idx
+        raise ValueError("report must be 'all' or 'fit'")
 
-    def components(self, stars):
+    def star_table(self, stars, rows):
+        """Star table of a solution (simulation: `piffval.diagnostics.star_table`); ``rows``
+        are the catalog rows of ``stars``."""
+        return diagnostics.star_table(self.psf, stars, rows)
+
+    def components(self, stars, rows):
         """Component summaries of a solution, compared with the simulation truth."""
-        return component_tables(self.psf, stars, self.rows)
+        return component_tables(self.psf, stars, rows)
 
     def moment_table(self, stars, table, settings):
         """Moment residuals of a solution (`moment_residuals` with the simulation)."""
@@ -405,8 +438,11 @@ class ReferenceSolver:
             raise ValueError("moment residuals need the simulation (sim=...)")
         return moment_residuals(self.psf, stars, table, self.sim, **settings)
 
-    def solve(self, starts=("given",), max_nfev=50, moments=None):
+    def solve(self, starts=("given",), max_nfev=50, moments=None, report="all", given=True):
         """Joint optimum from one or more starting points.
+
+        Only the fit stars are drawn during the optimisation (only they enter χ²); the
+        reported solutions are re-drawn exactly for the stars chosen by ``report``.
 
         Parameters
         ----------
@@ -417,18 +453,28 @@ class ReferenceSolver:
             Maximum χ² evaluations per start (Jacobian evaluations not counted). Default 50.
         moments : dict, optional
             Moment-residual settings for the reported solutions (see `evaluate`).
+        report : {'all', 'fit'}
+            Stars in the reported solutions: all (default) or only the fit stars (no reserve
+            diagnostics; much faster when most stars are reserve). See `evaluate`.
+        given : bool
+            Also report the given parameters (``'given'``). Default True; False saves one
+            exact evaluation (and its moments).
 
         Returns
         -------
         dict
-            ``'given'``: `ReferenceResult` of the given parameters with true centres and
-            profiled fluxes (for a fitted PSF: Piff's solution on the reference's terms);
-            ``'optimum'``: {start: ReferenceResult}. Each summary has ``nfev``, ``njev``,
-            ``status``, ``converged`` (False when scipy stopped at ``max_nfev``: status 0),
-            ``seconds``.
+            ``'given'`` (if ``given``): `ReferenceResult` of the given parameters with the
+            held centres and profiled fluxes (for a fitted PSF: Piff's solution on the
+            reference's terms); ``'optimum'``: {start: ReferenceResult}. Each optimum's
+            summary has ``nfev``, ``njev``, ``status``, ``converged`` (False when scipy
+            stopped at ``max_nfev``: status 0), ``seconds``.
         """
-        out = {"given": self.evaluate(self.x_start("given"), "given", moments),
-               "optimum": {}}
+        self._report_idx(report)  # validate before any work
+        out = {}
+        if given:
+            out["given"] = self.evaluate(self.x_start("given"), "given", moments,
+                                         report=report)
+        out["optimum"] = {}
         if self.nfree == 0:
             return out
         for start in starts:
@@ -443,7 +489,8 @@ class ReferenceSolver:
             info = {"start": start, "nfev": int(sol.nfev), "njev": int(sol.njev),
                     "status": int(sol.status), "converged": bool(sol.status > 0),
                     "message": str(sol.message), "seconds": time.time() - t0}
-            out["optimum"][start] = self.evaluate(sol.x, f"optimum ({start})", moments, info)
+            out["optimum"][start] = self.evaluate(sol.x, f"optimum ({start})", moments, info,
+                                                  report)
         return out
 
 
@@ -482,14 +529,15 @@ class ReferenceResult:
         self.components = components
 
 
-def reference_from_fit(result, freeze=(), starts=("given",), max_nfev=50, moments="same"):
+def reference_from_fit(result, freeze=(), starts=("given",), max_nfev=50, moments="same",
+                       report="all", given=True):
     """Reference optimum of the model of a `FitResult` (starting from Piff's solution).
 
     Parameters
     ----------
     result : FitResult
         A Piff fit (needs its stars: in memory, or reloaded with the simulation).
-    freeze, starts, max_nfev
+    freeze, starts, max_nfev, report, given
         See `ReferenceSolver` and `ReferenceSolver.solve`.
     moments : 'same', dict or None
         Moment settings: ``'same'`` (default) uses the fit's diagnostics settings when it
@@ -506,14 +554,17 @@ def reference_from_fit(result, freeze=(), starts=("given",), max_nfev=50, moment
         moments = ({k: v for k, v in diag.items() if k != "moments"}
                    if diag.get("moments") and result.sim is not None else None)
     solver = ReferenceSolver(result.psf, stars, rows, sim=result.sim, freeze=freeze)
-    return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments)
+    return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments, report=report,
+                        given=given)
 
 
-def reference_from_config(validation, freeze=(), starts=("zero",), max_nfev=50, moments=None):
+def reference_from_config(validation, freeze=(), starts=("zero",), max_nfev=50, moments=None,
+                          report="all", given=True):
     """Reference optimum of a `PiffValidation`'s model without running Piff's fit.
 
     Piff only initialises the model (`PiffValidation.initialize`); the solver starts from that
     initialisation (``'given'``) and/or from zero kernels and grids (``'zero'``, default).
+    ``report``, ``given``: see `ReferenceSolver.solve`.
 
     Returns
     -------
@@ -522,7 +573,8 @@ def reference_from_config(validation, freeze=(), starts=("zero",), max_nfev=50, 
     """
     psf, stars, rows = validation.initialize()
     solver = ReferenceSolver(psf, stars, rows, sim=validation.sim, freeze=freeze)
-    return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments)
+    return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments, report=report,
+                        given=given)
 
 
 def comparison_table(results, comparison="truth_os", algorithm="hsm"):

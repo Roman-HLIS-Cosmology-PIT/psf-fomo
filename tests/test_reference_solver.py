@@ -96,6 +96,47 @@ def test_reserve_stars_do_not_enter_chi2(synthetic_stars):
     assert solver.dof == sum(np.count_nonzero(s.weight.array) for s in stars[1:]) - 4 - 3
 
 
+def test_reserve_stars_are_not_drawn_during_optimisation(synthetic_stars):
+    # Reserve stars have zero weight in χ²: the optimum must not depend on them, and they are
+    # drawn only at the reported solutions (report='all'), never during the optimisation.
+    stars, rows = synthetic_stars(kernel_truth(), n=8, sigma=1.0)
+    for s in stars[:5]:
+        s.data.properties["is_reserve"] = True
+    psf = fit(kernel_config(signed=True, max_iter=3), stars)
+    fit_only = [k for k, s in enumerate(psf.stars) if not s.is_reserve]
+    assert len(fit_only) == 3
+
+    def run(stars, rows, report):
+        solver = ReferenceSolver(psf, stars, rows)
+        out = solver.solve(starts=("zero",), max_nfev=30, report=report, given=False)
+        return solver, out
+
+    full, out_full = run(psf.stars, rows, "fit")
+    sub, out_sub = run([psf.stars[k] for k in fit_only], rows[fit_only], "fit")
+    best_full, best_sub = out_full["optimum"]["zero"], out_sub["optimum"]["zero"]
+    assert "given" not in out_full
+    assert best_full.summary["dof"] == best_sub.summary["dof"]
+    np.testing.assert_allclose(best_full.summary["chisq"], best_sub.summary["chisq"],
+                               rtol=1e-8)
+    for key in ("mxx", "mxy", "myy"):
+        np.testing.assert_allclose(best_full.components["kernel"][key],
+                                   best_sub.components["kernel"][key], rtol=1e-6, atol=1e-10)
+    # Same draws as without the reserve stars; report='fit' gives only the fit stars.
+    assert full.n_draws == sub.n_draws
+    assert len(best_full.table) == 3 and not np.any(best_full.table["reserve"])
+    assert best_full.summary["n_reported"] == 3
+
+    # report='all': the same optimum, plus one exact draw of each reserve star.
+    every, out_every = run(psf.stars, rows, "all")
+    best_every = out_every["optimum"]["zero"]
+    assert every.n_draws == full.n_draws + 5
+    assert len(best_every.table) == 8 and np.sum(best_every.table["reserve"]) == 5
+    np.testing.assert_allclose(best_every.summary["chisq"], best_full.summary["chisq"],
+                               rtol=1e-12)
+    with pytest.raises(ValueError, match="report"):
+        full.solve(report="reserve")
+
+
 def test_basis_spans_piff_interpolation(synthetic_stars):
     # Piff's BasisPolynomial (order 1) and Polynomial (order 1) solutions lie in our basis.
     stars, rows = synthetic_stars(kernel_truth(), n=8, sigma=1.0)

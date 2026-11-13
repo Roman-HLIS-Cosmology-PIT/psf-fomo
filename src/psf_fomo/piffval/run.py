@@ -423,15 +423,17 @@ class FitResult:
         stars, rows = self.fitted_stars()
         return components_mod.components(self.psf, stars, rows)
 
-    def reference(self, freeze=(), starts=("given",), max_nfev=50, moments="same"):
+    def reference(self, freeze=(), starts=("given",), max_nfev=50, moments="same",
+                  report="all", given=True):
         """Joint χ² optimum of this fit's model (see `psf_fomo.reference.reference_from_fit`).
 
         Returns a dict with ``'given'`` (Piff's solution with true centres and profiled
-        fluxes, on the reference's χ² and dof) and ``'optimum'`` ({start: ReferenceResult}).
+        fluxes, on the reference's χ² and dof; only if ``given``) and ``'optimum'``
+        ({start: ReferenceResult}). ``report='fit'`` reports only the fit stars.
         """
         from ..reference import reference_from_fit  # the reference package imports piffval
         return reference_from_fit(self, freeze=freeze, starts=starts, max_nfev=max_nfev,
-                                  moments=moments)
+                                  moments=moments, report=report, given=given)
 
     def rho(self, algorithms=("wmom",), wmom_fwhm=(DEFAULT_WMOM_FWHM,), which="all",
             min_sep=0.1, max_sep=10.0, bin_size=0.5):

@@ -533,16 +533,18 @@ class DataFitResult:
         return component_tables(self.psf, stars, table, truth=False)
 
     def reference(self, freeze=(), starts=("given",), max_nfev=50, moments="same",
-                  centers="fitted"):
+                  centers="fitted", report="all", given=True):
         """Joint χ² optimum of this fit's model with centres held at Piff's fitted ones
         (see `psf_fomo.datafit.reference.reference_from_data_fit`).
 
         Returns a dict with ``'given'`` (Piff's solution, fluxes profiled, on the reference's
-        χ² and dof) and ``'optimum'`` ({start: ReferenceResult}).
+        χ² and dof; only if ``given``) and ``'optimum'`` ({start: ReferenceResult}).
+        ``report='fit'`` reports only the fit stars (faster with many reserve stars).
         """
         from .reference import reference_from_data_fit
         return reference_from_data_fit(self, freeze=freeze, starts=starts, max_nfev=max_nfev,
-                                       moments=moments, centers=centers)
+                                       moments=moments, centers=centers, report=report,
+                                       given=given)
 
     def rho(self, algorithms=("wmom",), wmom_fwhm=(DEFAULT_WMOM_FWHM,), which="all",
             min_sep=0.1, max_sep=10.0, bin_size=0.5):
