@@ -328,7 +328,8 @@ Steps; each star ends with one `reason`:
 `DataFit(image, catalog, fit_config, name=None)`; `set_stamp_size(25)`,
 `set_reserve(frac, seed)` (Piff's `reserve_frac`), `set_diagnostics(...)` (as the simulation
 module, comparisons `'data'` and `'model_os'` only), `set_verbose(level)`,
-`set_attitude("auto" | True | False)`; `run(save_to)`.
+`set_attitude("auto" | True | False)`; `run(save_to)`; `initialize(save_to=None)` (Piff's
+initialisation only, for a reference optimum without a fit; see "Reference optimum").
 
 `run` (one exposure, one SCA):
 1. image checks: `check_weights`, `check_orientation` (raises on a mirrored frame),
@@ -423,7 +424,37 @@ comparison_table({"Piff": res, "Piff, profiled": out["given"],
 - Parameters, frozen components, starts and cost as for simulations (`docs/piffval.md`).
   `DataReferenceSolver` (in `psf_fomo.datafit`) is the solver; it differs from the
   simulation one only in the held centres and the truth-free diagnostics.
-- No config-only reference (Piff initialisation without a fit) for real data yet.
+- **Weights and centres** are held during an optimisation. With model Poisson weights they
+  depend on the model, which Piff updates after each iteration. `refresh=k` repeats that
+  update at the optimum k times (model at the profiled flux → `Star.addPoisson` → Piff's
+  reflux of flux and centre), each followed by a new optimisation from the optimum
+  (iteratively reweighted least squares, the fixed point Piff converges to). Default: 0 after
+  a Piff fit (its stars carry its last update), 2 after `DataFit.initialize`. Each optimum's
+  `summary["rounds"]` lists per round `chisq_dof` (on that round's weights), `nfev`,
+  `seconds`, `converged`, `max_dx` (largest coefficient change; small = converged).
+
+### Reference without a Piff fit (`DataFit.initialize`)
+
+```python
+init = fit.initialize()                     # save_to=None: nothing kept on disk
+out = init.reference(starts=("zero",), max_nfev=50, given=False, report="fit")
+best = out["optimum"]["zero"]
+best.summary["rounds"]                      # convergence of the refresh rounds
+```
+
+`initialize(save_to=None)` runs `run`'s steps up to the fit (checks, working copy, catalog,
+Input, Select, the PSF), then what Piff's fit does before its first iteration
+(`initialize_flux_center`, `initialize_params`, one reflux; a `Mean` interpolator, which
+Piff leaves unsolved until its first iteration, is solved on the fit stars' initial parameters
+so the model can be saved, as `Polynomial` already is at initialisation) and its per-iteration
+Poisson
+update with the initial model (Poisson variance added, reflux). No Piff iteration and no
+moments (`init.compute_moments(...)` if wanted). The result is a `DataFitResult` with
+`fit_summary["initialized_only"]` True, `niter` 0, `converged` False. With `save_to` it is
+saved like a fit and reloads with `load_data_fit`; without, Piff's inputs go to a temporary
+folder that is removed (the stars stay in memory). The reference then defaults to
+`refresh=2`, so its weights and centres end up those of its own optimum, not of the initial
+model.
 
 **Saved folder**: `catalog.fits`, `piff.yaml`, `image_galsim_frame.fits` (the image flipped
 into GalSim's frame, for `frame="science"`; the size of your file), `detections.fits` (only

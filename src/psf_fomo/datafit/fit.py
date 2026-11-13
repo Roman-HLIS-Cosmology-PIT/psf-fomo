@@ -33,6 +33,7 @@ Example
 """
 import copy
 import inspect
+import tempfile
 import time
 import warnings
 from pathlib import Path
@@ -45,7 +46,7 @@ from .. import models  # noqa: F401  (registers our Piff models before any confi
 from ..io import provenance, read_yaml, write_yaml
 from ..moments.measure import DEFAULT_WMOM_FWHM
 from ..piffval import plotting
-from ..piffval.components import components as component_tables
+from ..piffval.components import components as component_tables, leaf_psfs
 from ..piffval.config import FitConfig
 from ..piffval.diagnostics import summary as star_summary
 from ..piffval.fitting import fit_summary, make_logger, piff_shape_method
@@ -261,6 +262,85 @@ class DataFit:
         """
         save_to = Path(save_to)
         save_to.mkdir(parents=True, exist_ok=True)
+        inputs = self._write_inputs(save_to)
+        config = inputs["config"]
+        logger, watch = make_logger(self.verbose)
+        t0 = time.time()
+        psf, objects, candidates, stars = self._read_and_select(config, logger)
+        shape = self.fit_config.config["shape_method"]
+        with piff_shape_method(shape["method"], shape["weight_fwhm"]):
+            psf.fit(stars, logger=logger)
+        seconds = time.time() - t0
+
+        table = diagnostics.star_table(psf, psf.stars, inputs["piff_catalog"])
+        max_iter = config["psf"].get("max_iter", 30)
+        summary = fit_summary(psf, not watch.triggered, max_iter, table, seconds)
+        result = self._result(psf, table, summary, inputs, objects, candidates, stars,
+                              save_to)
+        if self.diagnostics["moments"]:
+            settings = {k: v for k, v in self.diagnostics.items() if k != "moments"}
+            result.compute_moments(**settings)
+        result.save(save_to)
+        return result
+
+    def initialize(self, save_to=None):
+        """Piff's initialisation only, no fit: the start of a reference optimum without a
+        Piff run (``res.reference(starts=('zero',), given=False, refresh=...)``).
+
+        The same steps as `run` up to the fit (checks, working copy, catalog, Piff's Input and
+        Select, the PSF), then what Piff's ``fit`` does before its first iteration
+        (``initialize_flux_center``, ``initialize_params``, one reflux), followed by the
+        Poisson update of its iterations: with model Poisson weights (a ``gain`` per star),
+        the variance of the current model (fitted flux) is added to the background weights
+        (``Star.addPoisson``) and the stars are refluxed (flux and centre) with those weights.
+        This is Piff's state after an iteration that left the model at its initial values.
+        The reference solver then holds weights and centres fixed while it optimises; its
+        ``refresh`` rounds repeat this update at the optimum (see
+        `psf_fomo.datafit.reference.reference_from_data_fit`).
+
+        No moments are computed (call ``compute_moments`` if wanted).
+
+        Parameters
+        ----------
+        save_to : str or Path, optional
+            Folder for the result, as `run` (reload with `load_data_fit`). Default None:
+            nothing is kept on disk (Piff's inputs go to a temporary folder, removed after
+            the stars are read; the result then cannot be reloaded).
+
+        Returns
+        -------
+        DataFitResult
+            ``fit_summary['initialized_only']`` True, ``niter`` 0, ``converged`` False; χ² and
+            dof are Piff's (pixels − 3 per star) of the initialised model.
+        """
+        if save_to is None:
+            with tempfile.TemporaryDirectory() as folder:
+                return self._initialize(Path(folder), save=False)
+        save_to = Path(save_to)
+        save_to.mkdir(parents=True, exist_ok=True)
+        return self._initialize(save_to, save=True)
+
+    def _initialize(self, folder, save):
+        inputs = self._write_inputs(folder)
+        logger, _ = make_logger(self.verbose)
+        t0 = time.time()
+        psf, objects, candidates, stars = self._read_and_select(inputs["config"], logger)
+        shape = self.fit_config.config["shape_method"]
+        with piff_shape_method(shape["method"], shape["weight_fwhm"]):
+            initialize_stars(psf, stars, logger)
+        seconds = time.time() - t0
+        table = diagnostics.star_table(psf, psf.stars, inputs["piff_catalog"])
+        summary = fit_summary(psf, False, inputs["config"]["psf"].get("max_iter", 30), table,
+                              seconds)
+        summary["initialized_only"] = True
+        result = self._result(psf, table, summary, inputs, objects, candidates, stars,
+                              folder if save else None)
+        if save:
+            result.save(folder)
+        return result
+
+    def _write_inputs(self, folder):
+        """Checks, the working copy, the Piff catalog and config, written to ``folder``."""
         psf_config = self.fit_config.piff_config(self.image.filter_name)
         # Only RomanOptics depends on the pixel frame (GalSim's aberration field at the star's
         # pixel position); other models are built on the sky through the WCS.
@@ -271,46 +351,39 @@ class DataFit:
                   "nonfinite": self.image.check_finite(),
                   "attitude": {"requested": self.use_attitude, "used": attitude is not None,
                                "values": attitude}}
-        image_file = self.image.write_fit_copy(save_to / FIT_COPY_NAME)
+        image_file = self.image.write_fit_copy(folder / FIT_COPY_NAME)
         piff_catalog = self.catalog.piff_table(self.image, self.stamp_size)
-        catalog_file = save_to / "catalog.fits"
+        catalog_file = folder / "catalog.fits"
         piff_catalog.write(catalog_file, overwrite=True)
         config = self.piff_config(catalog_file, piff_catalog, image_file)
-        write_yaml(save_to / "piff.yaml", config)
+        write_yaml(folder / "piff.yaml", config)
+        return {"config": config, "piff_catalog": piff_catalog, "checks": checks}
 
-        logger, watch = make_logger(self.verbose)
-        shape = self.fit_config.config["shape_method"]
-        t0 = time.time()
+    def _read_and_select(self, config, logger):
+        """Piff's Input and Select, and the PSF with its context (not yet fitted)."""
         objects, wcs, pointing, bandpass = piff.Input.process(
             copy.deepcopy(config["input"]), copy.deepcopy(config), logger=logger)
         with piff_shape_method(self.catalog.selection["shape_method"]):
             candidates, stars = select_stars(config["select"], objects, config, logger)
         psf = piff.PSF.process(copy.deepcopy(config["psf"]), logger=logger)
         psf.set_context(wcs, pointing, bandpass)
-        with piff_shape_method(shape["method"], shape["weight_fwhm"]):
-            psf.fit(stars, logger=logger)
-        seconds = time.time() - t0
+        return psf, objects, candidates, stars
 
-        table = diagnostics.star_table(psf, psf.stars, piff_catalog)
-        max_iter = config["psf"].get("max_iter", 30)
-        summary = fit_summary(psf, not watch.triggered, max_iter, table, seconds)
+    def _result(self, psf, table, summary, inputs, objects, candidates, stars, folder):
+        """The `DataFitResult` of a run or an initialisation (``folder`` None: not saved)."""
+        piff_catalog = inputs["piff_catalog"]
         summary.update(n_catalog=len(piff_catalog), n_objects=len(objects),
                        n_candidates=len(candidates))
         run_config = self.config()
-        run_config["piff"] = config
-        if self.catalog.path is None:
+        run_config["piff"] = inputs["config"]
+        if self.catalog.path is None and folder is not None:
             # A catalog given as a table is kept with the run, so the config can rebuild it.
-            detections = save_to / "detections.fits"
+            detections = folder / "detections.fits"
             self.catalog.table.write(detections, overwrite=True)
             run_config["catalog"]["path"] = str(detections.resolve())
-        result = DataFitResult(psf, table, summary, run_config, provenance(), checks,
-                               selection_table(piff_catalog, objects, candidates, stars),
-                               stars=psf.stars)
-        if self.diagnostics["moments"]:
-            settings = {k: v for k, v in self.diagnostics.items() if k != "moments"}
-            result.compute_moments(**settings)
-        result.save(save_to)
-        return result
+        return DataFitResult(psf, table, summary, run_config, provenance(), inputs["checks"],
+                             selection_table(piff_catalog, objects, candidates, stars),
+                             stars=psf.stars)
 
 
 def piff_input_config(image, catalog, catalog_file, piff_catalog, stamp_size=25,
@@ -343,6 +416,51 @@ def piff_input_config(image, catalog, catalog_file, piff_catalog, stamp_size=25,
     if "gain" in piff_catalog.colnames:
         inp["gain_col"] = "gain"
     return inp
+
+
+def initialize_stars(psf, stars, logger):
+    """Piff's ``fit`` up to its first iteration plus its Poisson update (`DataFit.initialize`).
+
+    Sets ``psf.stars`` and the attributes Piff's ``fit`` sets (``chisq``, ``dof`` over fit
+    stars, ``niter`` 0, ``nremoved``, ``last_delta_chisq`` 0), so the result can be summarised
+    and written like a fitted PSF.
+    """
+    stars = psf.initialize_flux_center(stars, logger=logger)
+    stars, nremoved = psf.initialize_params(stars, logger=logger)
+    stars = solve_mean_interps(psf, stars)
+    stars, n = psf.reflux_stars(stars, logger)
+    nremoved += n
+    # As at the end of each Piff iteration: Poisson variance of the model at the fitted flux
+    # (a no-op without a 'gain' property), then reflux with the new weights.
+    stars = [s.addPoisson(m) for s, m in zip(stars, psf.drawStarList(stars))]
+    stars, n = psf.reflux_stars(stars, logger)
+    fit = [s for s in stars if not s.is_reserve and not s.is_flagged]
+    psf.stars = stars
+    psf.chisq = float(sum(s.fit.chisq for s in fit))
+    psf.dof = int(sum(s.fit.dof for s in fit))
+    psf.niter = 0
+    psf.nremoved = nremoved + n
+    psf.last_delta_chisq = 0.0
+    return stars
+
+
+def solve_mean_interps(psf, stars):
+    """Solve unsolved ``Mean`` interpolators on the initialised fit stars and interpolate.
+
+    Piff's ``Polynomial`` sets its coefficients at initialisation and interpolates the stars;
+    ``Mean`` stays unsolved (``mean`` None) until the first iteration, so the PSF could not
+    be written or drawn at new positions. Solving it on the initial parameters of the fit
+    stars (as an iteration does) gives the same kind of initial state as ``Polynomial``.
+    """
+    fit = [s for s in stars if not s.is_reserve and not s.is_flagged]
+    for leaf in leaf_psfs(psf):
+        interp = leaf.interp
+        if isinstance(interp, piff.Mean) and interp.mean is None:
+            interp.solve(fit, transform_params=leaf.model.transform_params)
+            stars = interp.interpolateList(stars,
+                                           reconstruct_params=leaf.model.reconstruct_params)
+            fit = [s for s in stars if not s.is_reserve and not s.is_flagged]
+    return stars
 
 
 def uses_roman_optics(psf_config):
@@ -533,18 +651,20 @@ class DataFitResult:
         return component_tables(self.psf, stars, table, truth=False)
 
     def reference(self, freeze=(), starts=("given",), max_nfev=50, moments="same",
-                  centers="fitted", report="all", given=True):
+                  centers="fitted", report="all", given=True, refresh=None):
         """Joint χ² optimum of this fit's model with centres held at Piff's fitted ones
         (see `psf_fomo.datafit.reference.reference_from_data_fit`).
 
         Returns a dict with ``'given'`` (Piff's solution, fluxes profiled, on the reference's
         χ² and dof; only if ``given``) and ``'optimum'`` ({start: ReferenceResult}).
         ``report='fit'`` reports only the fit stars (faster with many reserve stars).
+        ``refresh``: rounds of Poisson-weight and centre update at the optimum (default 2
+        after `DataFit.initialize`, 0 after a Piff fit).
         """
         from .reference import reference_from_data_fit
         return reference_from_data_fit(self, freeze=freeze, starts=starts, max_nfev=max_nfev,
                                        moments=moments, centers=centers, report=report,
-                                       given=given)
+                                       given=given, refresh=refresh)
 
     def rho(self, algorithms=("wmom",), wmom_fwhm=(DEFAULT_WMOM_FWHM,), which="all",
             min_sep=0.1, max_sep=10.0, bin_size=0.5):

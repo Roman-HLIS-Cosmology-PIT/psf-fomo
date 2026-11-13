@@ -62,8 +62,17 @@ class DataReferenceSolver(ReferenceSolver):
 
 
 def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
-                            moments="same", centers="fitted", report="all", given=True):
+                            moments="same", centers="fitted", report="all", given=True,
+                            refresh=None):
     """Reference optimum of the model of a `DataFitResult`, starting from Piff's solution.
+
+    The solver holds the stars' weights and centres fixed. With model Poisson weights they
+    depend on the model, which Piff updates after every iteration (Poisson variance of the
+    current model, then a reflux of flux and centre). ``refresh`` rounds do the same at the
+    optimum and optimise again from it (iteratively reweighted least squares, the fixed point
+    Piff converges to). A Piff fit's stars already carry its last update, so the default is
+    no refresh for a fit and 2 for `DataFit.initialize` results (whose weights and centres
+    come from the initial model).
 
     Parameters
     ----------
@@ -84,7 +93,12 @@ def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
         faster with a large reserve fraction; no reserve diagnostics). The optimisation
         itself always draws only the fit stars.
     given : bool
-        Also report Piff's solution (``'given'``). Default True.
+        Also report Piff's solution (``'given'``; for an initialised result, the initial
+        model). Default True.
+    refresh : int or None
+        Rounds of weight and centre update at the optimum, each followed by a new
+        optimisation from it (`ReferenceSolver.reweighted_stars`). Default None: 2 for a
+        `DataFit.initialize` result, 0 for a Piff fit.
 
     Returns
     -------
@@ -92,13 +106,61 @@ def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
         ``'given'`` (if ``given``): Piff's parameters with the held centres and profiled
         fluxes, on the reference's χ² and dof (dof = weighted pixels − fit stars − free
         coefficients); ``'optimum'``: {start: `ReferenceResult`}, with ``converged`` False
-        when scipy stopped at ``max_nfev``.
+        when scipy stopped at ``max_nfev`` (in the last round). With refresh rounds each
+        optimum's summary has ``rounds``: per round ``chisq_dof`` (on that round's weights),
+        ``nfev``, ``seconds``, ``converged`` and ``max_dx`` (largest change of a free
+        coefficient from the previous round; small = converged).
     """
     stars, _ = result.fitted_stars()
     if moments == "same":
         diag = result.config.get("diagnostics", {})
         moments = ({k: v for k, v in diag.items() if k != "moments"}
                    if diag.get("moments") else None)
+    if refresh is None:
+        refresh = 2 if result.fit_summary.get("initialized_only") else 0
+    if refresh < 0:
+        raise ValueError("refresh must be ≥ 0")
     solver = DataReferenceSolver(result.psf, stars, result.selection, freeze, centers)
-    return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments, report=report,
-                        given=given)
+    if refresh == 0:
+        return solver.solve(starts=starts, max_nfev=max_nfev, moments=moments, report=report,
+                            given=given)
+
+    solver._report_idx(report)  # validate before any work
+    out = {}
+    if given:
+        out["given"] = solver.evaluate(solver.x_start("given"), "given", moments,
+                                       report=report)
+    out["optimum"] = {}
+    if solver.nfree == 0:
+        return out
+    for start in starts:
+        # Intermediate rounds report only the fit stars and no moments (cheap); the last
+        # round is reported as asked.
+        sol = solver.solve(starts=(start,), max_nfev=max_nfev, report="fit",
+                           given=False)["optimum"][start]
+        rounds = [round_summary(sol, None)]
+        current = solver
+        for k in range(refresh):
+            last = k == refresh - 1
+            new_stars = current.reweighted_stars(sol.x, reserve=last and report == "all")
+            current = DataReferenceSolver(result.psf, new_stars, result.selection, freeze,
+                                          centers)
+            previous = sol.x
+            sol = current.solve(starts=("given",), max_nfev=max_nfev,
+                                moments=moments if last else None,
+                                report=report if last else "fit",
+                                given=False)["optimum"]["given"]
+            rounds.append(round_summary(sol, previous))
+        sol.summary.update(label=f"optimum ({start})", start=start, refresh=refresh,
+                           rounds=rounds)
+        out["optimum"][start] = sol
+    return out
+
+
+def round_summary(sol, previous_x):
+    """χ²/dof, optimiser status and coefficient change of one refresh round."""
+    s = sol.summary
+    max_dx = (None if previous_x is None or len(sol.x) == 0
+              else float(abs(sol.x - previous_x).max()))
+    return {"chisq_dof": s["chisq_dof"], "nfev": s["nfev"], "seconds": s["seconds"],
+            "converged": s["converged"], "max_dx": max_dx}

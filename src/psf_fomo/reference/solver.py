@@ -47,6 +47,7 @@ import numpy as np
 import scipy.optimize
 import galsim.roman
 import piff
+from piff.config import LoggerWrapper
 
 from ..piffval import diagnostics
 from ..piffval.config import blur_params
@@ -414,7 +415,37 @@ class ReferenceSolver:
         summary.update(info or {})
         moment_table = None if moments is None else self.moment_table(final, table, moments)
         return ReferenceResult(final, table, summary, moment_table,
-                               self.components(final, rows))
+                               self.components(final, rows), x=np.array(x, dtype=float))
+
+    def reweighted_stars(self, x, reserve=True):
+        """All stars at the solution x after Piff's per-iteration update of weights and centres.
+
+        For each star (reserve ones only if ``reserve``; flagged ones never): the model at x
+        is drawn with the flux profiled on the current weights, its Poisson variance is added
+        to the background weights (``Star.addPoisson``, a no-op without a ``gain`` property),
+        then Piff's reflux fits flux and centre with the new weights. The other stars only get
+        the parameters at x. A new solver on these stars continues from x (start
+        ``'given'``) with the updated weights and centres.
+
+        Returns
+        -------
+        list of piff.Star
+        """
+        Ps = self.per_star_params(x)
+        update = self.use | (reserve & np.array([not s.is_flagged for s in self.stars]))
+        out = []
+        for i, s in enumerate(self.stars):
+            star = piff.Star(s.data, self._fit_for(i, [P[i] for P in Ps]))
+            if update[i]:
+                m = self.psf.drawStar(star).image.array.ravel()
+                flux = np.sum(self.W[i] * m * self.D[i]) / np.sum(self.W[i] * m * m)
+                star = star.withFlux(float(flux))
+                star = star.addPoisson(self.psf.drawStar(star))
+                # reflux_stars flags a star whose reflux fails (as in Piff's fit).
+                star = self.psf.reflux_stars([star], LoggerWrapper(None))[0][0]
+                self.n_draws += 6  # 2 here, up to 4 in the reflux
+            out.append(star)
+        return out
 
     def _report_idx(self, report):
         if report == "all":
@@ -519,14 +550,17 @@ class ReferenceResult:
     components : dict
         As `FitResult.components()`. The optics ``fit_err`` column still holds Piff's
         parameter σ of the given solution (the reference does not estimate errors).
+    x : numpy.ndarray or None
+        The solver's free coefficients of this solution.
     """
 
-    def __init__(self, stars, table, summary, moments, components):
+    def __init__(self, stars, table, summary, moments, components, x=None):
         self.stars = stars
         self.table = table
         self.summary = summary
         self.moments = moments
         self.components = components
+        self.x = x
 
 
 def reference_from_fit(result, freeze=(), starts=("given",), max_nfev=50, moments="same",
