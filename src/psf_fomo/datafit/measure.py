@@ -9,10 +9,9 @@ measured with `psf_fomo.moments.measure.measure_star` about the catalog position
 of `psf_fomo.moments`: T = Mxx + Myy in native pix², σ = det(M)^¼ in pix, distortion e, world
 axes; flags 1 failure, 2 negative flux, 4 centroid > 1″, 8 exception).
 
-Algorithms on native (undersampled) stamps (CLAUDE.md §9.8): ``gauss`` fits an elliptical
-Gaussian (stars form a tight locus); ``wmom`` reports raw moments with a fixed round weight of
-the given FWHM, so every size is compressed toward the weight's (stars and galaxies still
-separate); ``hsm`` and ``am`` fail on most native stamps.
+Algorithms: ``gauss`` fits an elliptical Gaussian; ``wmom`` reports raw moments with a fixed
+round weight of the given FWHM, so sizes depend on the weight; ``hsm`` and ``am`` are
+adaptive and may fail on undersampled stamps (flagged).
 """
 import copy
 import tempfile

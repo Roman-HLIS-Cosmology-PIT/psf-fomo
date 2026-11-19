@@ -1,4 +1,4 @@
-"""Reference optimum of a real-data fit (CLAUDE.md §8, without truth).
+"""Reference optimum of a real-data fit (without truth).
 
 The joint χ² optimum of the *same* Piff model on the same stars, as for simulations
 (`psf_fomo.reference.ReferenceSolver`), to tell optimiser limits (Piff above the optimum of

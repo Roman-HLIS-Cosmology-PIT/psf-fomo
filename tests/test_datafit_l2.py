@@ -1,4 +1,4 @@
-"""L2Image: the user's L2 FITS layout, weights, sky, orientation, and Piff reading it."""
+"""L2Image: the L2 FITS layout, weights, sky, orientation, and Piff reading it."""
 import numpy as np
 import galsim
 import galsim.roman

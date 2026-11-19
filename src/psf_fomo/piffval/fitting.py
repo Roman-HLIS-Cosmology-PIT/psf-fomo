@@ -7,7 +7,7 @@
 - `fit_columns`: per-star flux, centroid and χ² columns of a fitted PSF.
 - `fit_summary`: whole-fit numbers (χ², dof, iterations, convergence, ...).
 
-Conventions (CLAUDE.md §5.4–5.5):
+Conventions (docs/conventions.md):
 
 - ``flux``: fitted flux in image units. ``model_flux``: total flux of the unit model (≠ 1 when
   a component, e.g. a PixelGrid in a Sum, carries net flux).
@@ -127,6 +127,110 @@ def kernel_max_nfev(psf):
 def leaf_models(psf):
     """All Piff Model objects of a (possibly composite) PSF, in component order."""
     return [leaf.model for leaf in leaf_psfs(psf)]
+
+
+DEFAULT_MIN_SEP = 2.5  # arcsec: a 25-pixel stamp reaches 1.9″ at its corners, plus PSF wings
+CUT_KEYS = ("min_sep", "min_snr", "max_snr_weight", "max_edge_frac", "stamp_center_size",
+            "max_mask_pixels", "max_pixel_cut", "reject_where", "nstars")
+
+
+def make_cuts(min_sep=DEFAULT_MIN_SEP, min_snr=None, max_snr_weight=None, max_edge_frac=None,
+              stamp_center_size=None, max_mask_pixels=None, max_pixel_cut=None,
+              reject_where=None, nstars=None):
+    """Piff's rejection cuts as a plain dict (used by simulation and real-data fits alike).
+
+    Parameters
+    ----------
+    min_sep : float or None
+        Reject stars with any other object within this distance, arcsec. Default 2.5. None:
+        no separation cut.
+    min_snr : float, optional
+        Minimum S/N (Piff's own estimate from the stamp and weight).
+    max_snr_weight : float, optional
+        Piff caps each star's effective S/N at this value by inflating its variance. None =
+        Piff's default (100); 0 turns the cap off.
+    max_edge_frac, stamp_center_size : float, optional
+        Reject stars with more than this flux fraction outside a radius of
+        ``stamp_center_size`` pixels (Piff's default radius 13, meant for 32-pixel stamps).
+    max_mask_pixels : int, optional
+        Reject stars with at least this many masked (zero-weight) pixels in the stamp.
+    max_pixel_cut : float, optional
+        Reject stars brighter than the flux whose typical peak pixel is this value (image
+        units).
+    reject_where : str, optional
+        Piff ``reject_where`` expression on star properties.
+    nstars : int, optional
+        Keep at most this many stars (highest S/N).
+
+    Returns
+    -------
+    dict
+        Keys `CUT_KEYS`; None means the cut is not applied.
+    """
+    if min_sep is not None and min_sep <= 0:
+        raise ValueError("min_sep must be > 0 (or None)")
+    cuts = {"min_sep": min_sep, "min_snr": min_snr, "max_snr_weight": max_snr_weight,
+            "max_edge_frac": max_edge_frac, "stamp_center_size": stamp_center_size,
+            "max_mask_pixels": max_mask_pixels, "max_pixel_cut": max_pixel_cut,
+            "reject_where": reject_where, "nstars": nstars}
+    floats = ("min_sep", "min_snr", "max_snr_weight", "max_edge_frac", "max_pixel_cut")
+    ints = ("stamp_center_size", "max_mask_pixels", "nstars")
+    return {k: (None if v is None else float(v) if k in floats else int(v) if k in ints else v)
+            for k, v in cuts.items()}
+
+
+def select_config(cuts, extra_reject=()):
+    """Piff ``select`` entries for these cuts (no selection type, no reserve).
+
+    Parameters
+    ----------
+    cuts : dict
+        From `make_cuts` (missing keys mean "not applied").
+    extra_reject : sequence of str
+        More ``reject_where`` expressions, combined with the cuts' own by ``or``.
+
+    Returns
+    -------
+    dict
+    """
+    out = {}
+    rejects = list(extra_reject)
+    if cuts.get("reject_where"):
+        rejects.append(f"({cuts['reject_where']})")
+    if rejects:
+        out["reject_where"] = " or ".join(rejects)
+    for key in CUT_KEYS:
+        if key != "reject_where" and cuts.get(key) is not None:
+            out[key] = cuts[key]
+    return out
+
+
+def apply_cuts(stars, cuts, logger=None):
+    """Apply Piff's rejection cuts to one exposure's stars, in memory.
+
+    All ``stars`` are the candidate objects (Piff's ``Flag`` selection without a flag) and also
+    the neighbours seen by ``min_sep``, so pass the stars of one exposure at a time. As in
+    Piff, kept stars get the Poisson variance of their own image added when they have a
+    ``gain`` property, and ``snr`` / ``raw_snr`` properties.
+
+    Returns
+    -------
+    kept : list of piff.Star
+        In the order of ``stars``.
+    keep : numpy.ndarray of bool
+        Which of ``stars`` were kept (Piff returns new objects, matched here by position in
+        the list through the ``_cut_index`` property).
+    """
+    for i, s in enumerate(stars):
+        s.data.properties["_cut_index"] = i
+    handler = piff.FlagSelect(select_config(cuts), logger=logger)
+    kept = handler.rejectStars(handler.selectStars(stars, logger), logger, objects=stars)
+    kept = sorted(kept, key=lambda s: s.data.properties["_cut_index"])
+    keep = np.zeros(len(stars), dtype=bool)
+    keep[[s.data.properties["_cut_index"] for s in kept]] = True
+    for s in list(stars) + list(kept):
+        s.data.properties.pop("_cut_index", None)
+    return kept, keep
 
 
 def choose_reserve(n, frac=0.0, seed=0):

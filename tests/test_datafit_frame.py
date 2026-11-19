@@ -1,8 +1,8 @@
 """Roman science frame (real L2 files) vs GalSim's SCA frame: flips, WCS, fits.
 
 Real L2 files are in Roman's science frame, mirrored relative to galsim.roman's frame: a y flip
-for SCA 11, an x flip for SCA 3 (measured on real files with compare_frames). Test files here
-are written in GalSim's frame and flipped into the science frame.
+for SCA 11, an x flip for SCA 3 (see docs/datafit.md for all SCAs). Test files here are written
+in GalSim's frame and flipped into the science frame.
 """
 import hashlib
 

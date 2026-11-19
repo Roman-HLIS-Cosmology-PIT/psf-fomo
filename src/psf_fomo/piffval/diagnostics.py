@@ -8,7 +8,7 @@ this module adds the simulation catalog columns and the truth ratios:
   ``galsim.roman.gain``.
 - ``flux_tot_r`` = ``flux_r`` × total flux of the unit model (e.g. optics ⊛ kernel + grid).
   It is the physically meaningful flux ratio when a component (PixelGrid in a Sum) carries
-  net flux (CLAUDE.md §5.5).
+  net flux.
 - ``du, dv`` [arcsec], ``dx, dy`` [pix]: fitted centre relative to the catalog position. The
   simulation places stars exactly at the catalog position, so these are centroid errors.
 - ``flag`` = 1 if Piff flagged (removed) the star, else 0.

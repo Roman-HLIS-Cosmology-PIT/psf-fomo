@@ -11,8 +11,7 @@ kernel (Piff gives it ``init='delta'`` by default), then the fixed MTF.
 
 Units follow Piff: arcsec for sizes and positions (PixelGrid scale, GaussianMixture sigmas),
 except ``GaussianMoments`` parameters, which are native pix². Piff's ``GaussianBlur`` (kernel
-kind ``'blur'``, Piff's ``gaussian_blur`` branch only) uses ``[ixx, iyy, ixy]`` in arcsec²;
-`blur_params` / `blur_moments` convert.
+kind ``'blur'``) uses ``[ixx, iyy, ixy]`` in arcsec²; `blur_params` / `blur_moments` convert.
 
 Example
 -------
@@ -31,7 +30,7 @@ from ..io import read_yaml, write_yaml
 from ..sim.psf import MTF_BASE_SIGMA, MTF_REL_SIGMAS, MTF_WEIGHTS
 
 OPTICS_MODES = ("free", "pinned")
-KERNEL_KINDS = ("signed", "positive", "gaussian", "blur")
+KERNEL_KINDS = ("signed", "blur", "gaussian")
 KERNEL_INTERPS = ("Polynomial", "BasisPolynomial")
 PIXEL_SCALE = galsim.roman.pixel_scale
 SHAPE_METHODS = ("hsm", "gauss", "am", "wmom")
@@ -50,7 +49,7 @@ class FitConfig:
     through YAML (`to_yaml`, `from_yaml`).
 
     Defaults: free RomanOptics with Piff's defaults (Z4–Z22, prior σ 0.05 waves, constant per
-    SCA, bilinear), fixed MTF on, no kernel, no PixelGrid, no outlier rejection, Piff's
+    SCA, bilinear, Piff's chromatic setting), fixed MTF on, no kernel, no PixelGrid, no outlier rejection, Piff's
     iteration defaults (max_iter 30, min_iter 2, chisq_thresh 0.1), Piff's shape method
     ``'hsm'``.
     """
@@ -58,7 +57,8 @@ class FitConfig:
     def __init__(self):
         self.config = {
             "optics": {"mode": "free", "max_zernike": 22, "prior_sigma": 0.05,
-                       "aberration_interp": "constant", "nominal_interp": "bilinear"},
+                       "aberration_interp": "constant", "nominal_interp": "bilinear",
+                       "chromatic": None},
             "mtf": True,
             "kernel": None,
             "pixelgrid": None,
@@ -69,7 +69,7 @@ class FitConfig:
         }
 
     def set_optics(self, mode="free", max_zernike=22, prior_sigma=0.05,
-                   aberration_interp="constant", nominal_interp="bilinear"):
+                   aberration_interp="constant", nominal_interp="bilinear", chromatic=None):
         """Configure the Piff ``RomanOptics`` component (always present).
 
         Parameters
@@ -90,6 +90,10 @@ class FitConfig:
         nominal_interp : {'bilinear', 'five_point'}
             Piff option for the spatial interpolation of the sample-point PSFs. Use the same as
             the simulation (default ``'bilinear'``).
+        chromatic : bool or None
+            Piff's ``chromatic`` option. None (default): not set, so Piff's default applies
+            (``True``: the PSF is integrated over the bandpass with each star's SED, which
+            every star must have). False: the PSF at the bandpass's effective wavelength.
         """
         if mode not in OPTICS_MODES:
             raise ValueError(f"mode must be one of {OPTICS_MODES}")
@@ -110,12 +114,13 @@ class FitConfig:
         self.config["optics"] = {"mode": mode, "max_zernike": int(max_zernike),
                                  "prior_sigma": prior_sigma,
                                  "aberration_interp": aberration_interp,
-                                 "nominal_interp": nominal_interp}
+                                 "nominal_interp": nominal_interp,
+                                 "chromatic": None if chromatic is None else bool(chromatic)}
 
     def set_mtf(self, on=True):
         """Include the fixed charge-diffusion kernel (Piff ``GaussianMixture``, ``Fixed``).
 
-        Same three Gaussians as the simulation truth at ``mtf_scale = 1`` (CLAUDE.md §5.3),
+        Same three Gaussians as the simulation truth at ``mtf_scale = 1`` (docs/conventions.md),
         sigmas converted to arcsec with ``galsim.roman.pixel_scale``. It cannot be fitted.
         """
         self.config["mtf"] = bool(on)
@@ -125,19 +130,18 @@ class FitConfig:
 
         Parameters
         ----------
-        kind : {'signed', 'positive', 'gaussian', 'blur'} or None
-            ``'signed'`` / ``'positive'``: our ``GaussianMoments`` (M in pix², flux and centre
-            fixed in its per-star fit). ``'gaussian'``: Piff's ``Gaussian`` (scale, g1, g2;
-            its per-star fit also moves flux and centre), ``init='delta'``. ``'blur'``: Piff's
-            ``GaussianBlur`` (only on Piff's ``gaussian_blur`` branch; ``[ixx, iyy, ixy]`` in
-            arcsec², PSD-projected, flux and centre fixed in its fit, starts at zero).
+        kind : {'signed', 'blur', 'gaussian'} or None
+            ``'signed'``: our ``GaussianMoments`` (M in pix², either sign, flux and centre
+            fixed in its per-star fit). ``'blur'``: Piff's ``GaussianBlur`` (``[ixx, iyy,
+            ixy]`` in arcsec², projected onto PSD matrices so it can only broaden, flux and
+            centre fixed in its fit, starts at zero). ``'gaussian'``: Piff's ``Gaussian``
+            (scale, g1, g2; its per-star fit also moves flux and centre), ``init='delta'``.
         order : int
             Order of the interpolator in (u, v). Needs at least (order+1)(order+2)/2 stars.
             Default 0 (one kernel for the SCA).
         init : sequence of 3 float, optional
-            Starting (Mxx, Mxy, Myy) in native pix² for ``'signed'``, ``'positive'`` and
-            ``'blur'`` (converted to GaussianBlur's ``[ixx, iyy, ixy]`` arcsec²). Default: the
-            model's default ((0.01, 0, 0.01) positive, 0 signed and blur).
+            Starting (Mxx, Mxy, Myy) in native pix² for ``'signed'`` and ``'blur'``
+            (converted to GaussianBlur's ``[ixx, iyy, ixy]`` arcsec²). Default 0.
         max_nfev : int
             ``GaussianMoments`` evaluations per star and iteration. Default 30.
         interp : {'Polynomial', 'BasisPolynomial'}
@@ -148,6 +152,8 @@ class FitConfig:
         if kind is None:
             self.config["kernel"] = None
             return
+        if kind == "positive":
+            raise ValueError("kind 'positive' was removed; use 'blur' (Piff's GaussianBlur)")
         if kind not in KERNEL_KINDS:
             raise ValueError(f"kind must be one of {KERNEL_KINDS} or None")
         if order < 0:
@@ -230,8 +236,8 @@ class FitConfig:
         Parameters
         ----------
         method : {'hsm', 'gauss', 'am', 'wmom'}
-            Default ``'hsm'`` (Piff's default). Note: HSM fails on most native H158 stamps
-            (Phase 3); Piff does not check that flag when initialising.
+            Default ``'hsm'`` (Piff's default). HSM can fail on undersampled stamps; Piff
+            does not check its failure flag when initialising.
         weight_fwhm : float, optional
             Weight FWHM in arcsec, required for ``'wmom'``.
         """
@@ -286,12 +292,16 @@ class FitConfig:
     def _optics(self, filter_name):
         o = self.config["optics"]
         pinned = o["mode"] == "pinned"
-        return {"type": "RomanOptics", "filter_name": filter_name,
-                "chromatic": False,  # Piff's default is True; chromatic fits are deferred
-                "max_zernike": PINNED_MAX_ZERNIKE if pinned else o["max_zernike"],
-                "aberration_prior_sigma": PINNED_PRIOR_SIGMA if pinned else o["prior_sigma"],
-                "aberration_interp": o["aberration_interp"],
-                "nominal_interp": o["nominal_interp"]}
+        optics = {"type": "RomanOptics", "filter_name": filter_name,
+                  "max_zernike": PINNED_MAX_ZERNIKE if pinned else o["max_zernike"],
+                  "aberration_prior_sigma": PINNED_PRIOR_SIGMA if pinned else o["prior_sigma"],
+                  "aberration_interp": o["aberration_interp"],
+                  "nominal_interp": o["nominal_interp"]}
+        # Not set: Piff's own default applies. (Settings saved before this option existed
+        # have no key; they were always written with chromatic False.)
+        if o.get("chromatic") is not None:
+            optics["chromatic"] = o["chromatic"]
+        return optics
 
     def _kernel(self):
         k = self.config["kernel"]
@@ -301,12 +311,15 @@ class FitConfig:
             model = {"type": "GaussianBlur"}
             if k["init"] is not None:
                 model["init"] = blur_params(*k["init"])
+        elif k["kind"] != "signed":
+            # e.g. 'positive' in settings saved before it was replaced by 'blur'
+            raise ValueError(f"kernel kind {k['kind']!r} is not available; use one of "
+                             f"{KERNEL_KINDS}")
         else:
             # Imported here so that building configs does not need the models registered
             # until a Piff object is made from them.
             from .. import models  # noqa: F401  (registers GaussianMoments)
-            model = {"type": "GaussianMoments", "signed": k["kind"] == "signed",
-                     "max_nfev": k["max_nfev"]}
+            model = {"type": "GaussianMoments", "max_nfev": k["max_nfev"]}
             if k["init"] is not None:
                 model["init"] = list(k["init"])
         # Settings saved before 'interp' existed mean Polynomial.
@@ -349,6 +362,28 @@ class FitConfig:
     def from_yaml(cls, path):
         """Build from a YAML file written by `to_yaml`."""
         return cls.from_config(read_yaml(path))
+
+
+def needs_star_seds(psf_config):
+    """True if a Piff ``psf`` config has a chromatic ``RomanOptics`` component.
+
+    A RomanOptics block without a ``chromatic`` entry uses Piff's default, read from Piff's
+    `RomanOpticalModel` (currently True). Chromatic RomanOptics needs an SED on every star.
+    """
+    if isinstance(psf_config, dict):
+        if psf_config.get("type") == "RomanOptics":
+            return bool(psf_config.get("chromatic", piff_default_chromatic()))
+        return any(needs_star_seds(v) for v in psf_config.values())
+    if isinstance(psf_config, (list, tuple)):
+        return any(needs_star_seds(v) for v in psf_config)
+    return False
+
+
+def piff_default_chromatic():
+    """Piff's default for RomanOptics' ``chromatic`` option."""
+    import inspect
+    from piff.roman.roman_psf import RomanOpticalModel
+    return inspect.signature(RomanOpticalModel.__init__).parameters["chromatic"].default
 
 
 def blur_params(mxx, mxy, myy):

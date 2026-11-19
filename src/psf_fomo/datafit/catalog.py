@@ -1,6 +1,6 @@
 """Detection catalogs and star selection for real-data fits (`StarCatalog`).
 
-The user's SEP detection catalog (FITS table, HDU 1): ``id`` (1…N), ``x``, ``y`` (0-based:
+A SEP detection catalog (FITS table, HDU 1): ``id`` (1…N), ``x``, ``y`` (0-based:
 the first pixel centre is (0, 0)), ``ra_deg``, ``dec_deg``, ``flux_auto`` [DN/s] (the flux to
 use), ``flux_auto_err_bkg``, ``snr_auto_bkg``, ``r50`` [pix], shape columns, flags and the
 boolean ``clean``; header ``SKY``, ``DETCFG``, ``MATCHRAD``, ``OBSTIME``, ``NMATCH``, ``ABZP``.
@@ -10,8 +10,8 @@ neighbour (galaxies and unclean objects included). Which objects are stars is a 
 ``select`` step on top:
 
 - ``'sizemag'`` (default): Piff's ``SizeMag`` star finder (stellar locus in size vs
-  magnitude). It measures every object with Piff's global shape method; HSM fails on most
-  native H158 stamps (CLAUDE.md §9.8), so the selection runs with ``gauss`` by default.
+  magnitude). It measures every object with Piff's global shape method; the selection runs
+  with ``gauss`` by default.
 - ``'all'``: every detection.
 - ``'column'``: a flag column of the catalog (Piff ``Flag``).
 - ``'locus'``: our own stellar-locus selection (`StarCatalog.select_locus`, module
@@ -31,6 +31,7 @@ from astropy.io import fits
 from astropy.table import Table
 
 from ..io import to_plain
+from ..piffval.fitting import DEFAULT_MIN_SEP, make_cuts, select_config
 
 PIFF_ID = "id"          # star id property in Piff (the catalog's id column, renamed)
 PIFF_CLEAN = "clean"    # clean property in Piff (0/1)
@@ -38,9 +39,7 @@ SELECT_METHODS = ("sizemag", "all", "column")   # 'locus' is set by select_locus
 LOCUS_COLUMN = "psf_locus"   # 0/1 column of the stars chosen by select_locus
 HEADER_KEYS = ("SKY", "DETCFG", "MATCHRAD", "OBSTIME", "NMATCH", "ABZP")
 SHAPE_METHODS = ("hsm", "gauss", "am", "wmom")
-DEFAULT_CUTS = {"clean_only": True, "min_snr": None, "min_sep": None, "max_mask_pixels": None,
-                "max_edge_frac": None, "stamp_center_size": None, "max_pixel_cut": None,
-                "reject_where": None, "nstars": None, "max_snr_weight": None}
+DEFAULT_CUTS = {"clean_only": True, **make_cuts()}   # min_sep 2.5″, nothing else
 
 
 class StarCatalog:
@@ -121,7 +120,7 @@ class StarCatalog:
             with bit 1 set).
         shape_method : {'hsm', 'gauss', 'am', 'wmom'}
             Piff's global shape method during the selection (SizeMag sizes, and the
-            shape-based cuts). Default ``'gauss'`` (HSM fails on most native stamps). The fit
+            shape-based cuts). Default ``'gauss'``. The fit
             has its own (`FitConfig.set_piff_shape_method`).
         """
         if method not in SELECT_METHODS:
@@ -143,6 +142,8 @@ class StarCatalog:
 
     def select_locus(self, measured, **settings):
         """Select the PSF stars with our stellar-locus selection, replacing Piff's star finder.
+
+        Experimental.
 
         Runs `psf_fomo.datafit.locus.select_locus` on a `measure` table of this catalog and
         makes the chosen stars the selection: a 0/1 column ``psf_locus`` read by Piff's
@@ -186,10 +187,14 @@ class StarCatalog:
                                     "ids": chosen}}
         return result
 
-    def set_cuts(self, clean_only=True, min_snr=None, min_sep=None, max_mask_pixels=None,
-                 max_edge_frac=None, stamp_center_size=None, max_pixel_cut=None,
-                 reject_where=None, nstars=None, max_snr_weight=None):
+    def set_cuts(self, clean_only=True, min_snr=None, min_sep=DEFAULT_MIN_SEP,
+                 max_mask_pixels=None, max_edge_frac=None, stamp_center_size=None,
+                 max_pixel_cut=None, reject_where=None, nstars=None, max_snr_weight=None):
         """Piff's rejection cuts, applied after the star selection.
+
+        The same cuts as `psf_fomo.piffval.PiffValidation.set_cuts` (built by
+        `psf_fomo.piffval.fitting.make_cuts`), plus ``clean_only``. Without a call, the
+        defaults apply (``clean_only``, ``min_sep`` 2.5″).
 
         Parameters
         ----------
@@ -197,10 +202,12 @@ class StarCatalog:
             Reject objects whose ``clean`` column is false. Default True.
         min_snr : float, optional
             Minimum S/N (Piff's own estimate from the stamp and weight).
-        min_sep : float, optional
-            Reject stars with any other detection within this distance, arcsec.
+        min_sep : float or None
+            Reject stars with any other detection within this distance, arcsec. Default 2.5
+            (a 25-pixel stamp reaches 1.9″ at its corners, plus the PSF wings). None: no
+            separation cut.
         max_mask_pixels : int, optional
-            Reject stars with more masked (zero-weight) pixels in the stamp.
+            Reject stars with at least this many masked (zero-weight) pixels in the stamp.
         max_edge_frac, stamp_center_size : float, optional
             Reject stars with more than this flux fraction outside a radius of
             ``stamp_center_size`` pixels (Piff default 13, meant for 32-pixel stamps).
@@ -219,12 +226,11 @@ class StarCatalog:
         """
         if clean_only and self.columns["clean"] is None:
             raise ValueError("clean_only needs clean_col")
-        self.cuts = {"clean_only": bool(clean_only), "min_snr": min_snr, "min_sep": min_sep,
-                     "max_mask_pixels": max_mask_pixels, "max_edge_frac": max_edge_frac,
-                     "stamp_center_size": stamp_center_size, "max_pixel_cut": max_pixel_cut,
-                     "reject_where": reject_where, "nstars": nstars,
-                     "max_snr_weight": None if max_snr_weight is None
-                     else float(max_snr_weight)}
+        cuts = make_cuts(min_sep=min_sep, min_snr=min_snr, max_snr_weight=max_snr_weight,
+                         max_edge_frac=max_edge_frac, stamp_center_size=stamp_center_size,
+                         max_mask_pixels=max_mask_pixels, max_pixel_cut=max_pixel_cut,
+                         reject_where=reject_where, nstars=nstars)
+        self.cuts = {"clean_only": bool(clean_only), **cuts}
 
     def piff_select(self):
         """Piff's ``select`` field for this selection and these cuts (without reserve).
@@ -237,17 +243,8 @@ class StarCatalog:
         out = {"type": {"sizemag": "SizeMag", "all": "Flag", "column": "Flag",
                         "locus": "Flag"}[method]}
         out.update(self.selection["options"])
-        rejects = []
-        if self.cuts["clean_only"]:
-            rejects.append(f"{PIFF_CLEAN} == 0")
-        if self.cuts["reject_where"]:
-            rejects.append(f"({self.cuts['reject_where']})")
-        if rejects:
-            out["reject_where"] = " or ".join(rejects)
-        for key in ("min_snr", "min_sep", "max_mask_pixels", "max_edge_frac",
-                    "stamp_center_size", "max_pixel_cut", "nstars", "max_snr_weight"):
-            if self.cuts[key] is not None:
-                out[key] = self.cuts[key]
+        clean = [f"{PIFF_CLEAN} == 0"] if self.cuts["clean_only"] else []
+        out.update(select_config(self.cuts, extra_reject=clean))
         return out
 
     def piff_table(self, image=None, stamp_size=25, fit_frame=True):

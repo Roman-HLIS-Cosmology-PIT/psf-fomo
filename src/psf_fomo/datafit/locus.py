@@ -33,9 +33,8 @@ Steps (each star ends with one ``reason``):
 6. ``'selected'``: the rest.
 
 Sizes are those of `psf_fomo.datafit.measure` (T [pix²] or σ [pix] of any algorithm, or the
-catalog ``size_cat``); the default ``T_wmom_0.4`` has the smallest star-to-star scatter on
-native stamps (CLAUDE.md §9.8), which is what a locus selection needs (its compression of
-sizes toward the weight does not matter here).
+catalog ``size_cat``); the default ``T_wmom_0.4`` uses a fixed weight, which gives a stable
+size on native stamps (that wmom sizes depend on the weight does not matter here).
 """
 import warnings
 
@@ -91,7 +90,7 @@ class LocusResult:
 def select_locus(table, size="T_wmom_0.4", order=1, k=3.0, mag="mag", mag_max=None,
                  bright_limit=None, mag_bin=0.25, sat_sigma=3.0, sat_bins=2,
                  min_bin_count=3, min_shift=1.0):
-    """Select the stellar-locus stars of a pre-fit measurement table.
+    """Select the stellar-locus stars of a pre-fit measurement table. Experimental.
 
     Parameters
     ----------

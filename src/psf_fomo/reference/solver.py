@@ -1,4 +1,4 @@
-"""Reference solver: the joint χ² optimum of the model Piff fits (CLAUDE.md §8).
+"""Reference solver: the joint χ² optimum of the model Piff fits.
 
 Piff fits a composite PSF block by block (each component in turn, then flux and centre,
 iterated). The reference solver takes the *same* Piff PSF object and minimises χ² over all
@@ -34,7 +34,7 @@ Simplifications:
   (``report='all'``, default) or not at all (``report='fit'``).
 
 Degrees of freedom: dof = weighted pixels of fit stars − one flux per fit star − free model
-coefficients (CLAUDE.md §5.5). Piff's own dof is pixels − 3 per star.
+coefficients (docs/conventions.md). Piff's own dof is pixels − 3 per star.
 
 Speed: derivatives are per star (each star depends only on its own parameters; polynomial
 coefficients enter through the chain rule). Components that enter the image linearly (e.g. a
@@ -198,21 +198,19 @@ class ReferenceSolver:
 
     def x_start(self, which="given"):
         """Start vector: ``'given'`` (the stars' parameters) or ``'zero'`` (kernel and grid
-        components at zero; optics and Piff Gaussians at their given values). PSD-clipped
-        kernels (positive GaussianMoments, Piff GaussianBlur) start at 0.01 pix² per axis."""
+        components at zero; optics and Piff Gaussians at their given values). Piff's
+        GaussianBlur (PSD-projected) starts at 0.01 pix² per axis."""
         parts = []
         for lf in self.free:
             if which == "given" or lf.kind == "optics" or lf.name == "Gaussian":
                 parts.append(lf.C_given.ravel())  # Gaussian (scale, g) cannot start at 0
             elif which == "zero":
                 C = np.zeros((lf.nterms, lf.plen))
-                # M = 0 is the apex of the PSD cone, where a PSD-clipped kernel is not
+                # M = 0 is the apex of the PSD cone, where a PSD-projected kernel is not
                 # differentiable (forward steps in Mxy leave the cone): start at a small round
                 # kernel, 0.01 pix² per axis (constant term only; the first basis column is
                 # the constant).
-                if lf.name == "GaussianMoments" and not lf.psf.model.signed:
-                    C[0] = (0.01, 0.0, 0.01)
-                elif lf.name == "GaussianBlur":
+                if lf.name == "GaussianBlur":
                     C[0] = blur_params(0.01, 0.0, 0.01)
                 parts.append(C.ravel())
             else:

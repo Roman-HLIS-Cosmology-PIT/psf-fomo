@@ -13,12 +13,13 @@ stage is kept:
 
 ``piff.yaml`` also runs with Piff's ``piffify`` (one shape method for selection and fit there).
 
-Telescope attitude (`DataFit.set_attitude`): with a RomanOptics model and an image whose
-pointing is known (`L2Image.attitude`), the boresight and V3 position angle are written into
-the RomanOptics config (``boresight_ra``, ``boresight_dec``, ``telescope_pa``, degrees), so
-GalSim orients the optical PSF from the telescope attitude instead of the WCS. This needs a
-GalSim whose ``roman.getPSF`` takes ``boresight`` / ``telescope_PA`` and a Piff whose
-RomanOptics takes these options (`attitude_support`).
+Telescope attitude (`DataFit.set_attitude`, experimental, off by default): with a RomanOptics
+model and an image whose pointing is known (`L2Image.attitude`), the boresight and V3
+position angle are written into the RomanOptics config (``boresight_ra``, ``boresight_dec``,
+``telescope_pa``, degrees), so GalSim orients the optical PSF from the telescope attitude
+instead of the WCS. This needs a GalSim whose ``roman.getPSF`` takes ``boresight`` /
+``telescope_PA`` and a Piff whose RomanOptics takes these options; neither is in a GalSim or
+Piff release yet. `attitude_support` reports what the installed versions lack.
 
 Example
 -------
@@ -39,6 +40,8 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+import galsim
+import galsim.roman
 import piff
 from astropy.table import Table
 
@@ -47,10 +50,12 @@ from ..io import provenance, read_yaml, write_yaml
 from ..moments.measure import DEFAULT_WMOM_FWHM
 from ..piffval import plotting
 from ..piffval.components import components as component_tables, leaf_psfs
-from ..piffval.config import FitConfig
+from ..piffval.config import FitConfig, needs_star_seds
+from ..sim.storage import (SED_FILE, piff_sed_input, sample_sed, sed_from_setting,
+                           sed_setting, write_sed)
 from ..piffval.diagnostics import summary as star_summary
 from ..piffval.fitting import fit_summary, make_logger, piff_shape_method
-from ..piffval.residuals import (MODEL_OS_SIZE, model_moments, moment_residuals,
+from ..piffval.residuals import (MODEL_OS_SIZE, fit_sed, model_moments, moment_residuals,
                                  moment_summary, sca_grid)
 from . import diagnostics
 from .catalog import PIFF_ID, StarCatalog
@@ -92,18 +97,43 @@ class DataFit:
         self.reserve = {"frac": 0.0, "seed": 0}
         self.diagnostics = copy.deepcopy(DEFAULT_DIAGNOSTICS)
         self.verbose = 0
-        self.use_attitude = "auto"
+        self.use_attitude = False
+        self.sed = sed_setting("flat")
 
-    def set_attitude(self, use="auto"):
-        """Whether RomanOptics is oriented by the telescope attitude (see the module docstring).
+    def set_sed(self, sed="flat", wave_type="nm", flux_type="fphotons"):
+        """The SED given to every star, used by a chromatic RomanOptics model.
+
+        Piff's RomanOptics is chromatic by default, and then needs an SED for each star.
+        Real stars have none in the catalog, so one SED is assumed for all of them.
 
         Parameters
         ----------
-        use : {'auto', True, False}
-            ``'auto'`` (default): use it when the model has RomanOptics, the image's attitude
-            is known and the installed GalSim and Piff support it; otherwise (warning if only
-            the software is missing) GalSim orients the PSF from the WCS. True: require it
-            (`run` raises if it cannot be used). False: never use it (WCS orientation).
+        sed : 'flat', str, galsim.SED or None
+            ``'flat'`` (default): constant photons per unit wavelength. A file name: read by
+            ``galsim.SED`` (and by Piff) with ``wave_type`` and ``flux_type``. A spectral
+            ``galsim.SED``: sampled every 0.5 nm over the filter's wavelength range. None: no
+            SED (only for a monochromatic model, ``FitConfig.set_optics(chromatic=False)``).
+        wave_type, flux_type : str
+            Units of an SED file, as for ``galsim.SED``.
+        """
+        bandpass = galsim.roman.getBandpasses()[self.image.filter_name]
+        if sed is not None and not isinstance(sed, galsim.SED) and sed != "flat":
+            sed = str(Path(sed).resolve())        # Piff reads it from the fit folder
+        self.sed = sed_setting(sed, bandpass, wave_type, flux_type)
+
+    def set_attitude(self, use=False):
+        """Whether RomanOptics is oriented by the telescope attitude (see the module docstring).
+
+        Experimental: needs GalSim and Piff changes that are not released yet
+        (`attitude_support` lists what the installed versions lack). Off unless set here.
+
+        Parameters
+        ----------
+        use : {False, 'auto', True}
+            False (default): never (GalSim orients the PSF from the WCS). ``'auto'``: use it
+            when the model has RomanOptics, the image's attitude is known and the installed
+            GalSim and Piff support it; otherwise (warning if only the software is missing) the
+            WCS orientation. True: require it (`run` raises if it cannot be used).
         """
         if use != "auto" and not isinstance(use, bool):
             raise ValueError("use must be 'auto', True or False")
@@ -231,6 +261,13 @@ class DataFit:
         attitude = self.attitude(warn=False)
         if attitude is not None:
             add_attitude(psf, attitude)
+        if needs_star_seds(psf):
+            if self.sed is None:
+                raise ValueError("the Piff model is chromatic (RomanOptics, Piff's default) "
+                                 "and needs an SED for the stars: set_sed('flat' | file | "
+                                 "galsim.SED), or FitConfig.set_optics(..., chromatic=False)")
+            # 'flat' / 'table': sed.fits, written next to the catalog by `run`.
+            inp.update(piff_sed_input(self.sed, user_file=self.sed["sed"]))
         config = {"modules": ["psf_fomo.models"], "input": inp, "select": select,
                   "psf": psf, "shape_method": shape["method"]}
         if shape["weight_fwhm"] is not None:
@@ -242,26 +279,37 @@ class DataFit:
         return {"name": self.name, "sca": self.image.sca, "image": self.image.config(),
                 "catalog": self.catalog.config(), "stamp_size": self.stamp_size,
                 "reserve": dict(self.reserve), "diagnostics": copy.deepcopy(self.diagnostics),
-                "fit": copy.deepcopy(self.fit_config.config), "attitude": self.use_attitude}
+                "fit": copy.deepcopy(self.fit_config.config), "attitude": self.use_attitude,
+                "sed": copy.deepcopy(self.sed)}
 
-    def run(self, save_to):
-        """Check the image, select stars, fit, compute the diagnostics, save.
+    def run(self, save_to=None):
+        """Check the image, select stars, fit, compute the diagnostics, and save if asked.
 
         Parameters
         ----------
-        save_to : str or Path
+        save_to : str or Path, optional
             Output folder (Piff reads the catalog from it): ``catalog.fits``, ``piff.yaml``,
             ``image_galsim_frame.fits`` (the image flipped into GalSim's frame, for
             ``frame='science'`` files; the original is not changed), ``detections.fits``
             (only for a catalog given as a table: the full table), and the result files (see
-            `DataFitResult.save`).
+            `DataFitResult.save`); reload with `load_data_fit`. Default None: nothing is kept
+            on disk (Piff's inputs go to a temporary folder, removed after the fit). The
+            result then works in memory as usual, but cannot be reloaded with
+            `load_data_fit`.
 
         Returns
         -------
         DataFitResult
         """
+        if save_to is None:
+            with tempfile.TemporaryDirectory(prefix="psf_fomo_fit_") as folder:
+                return self._run(Path(folder), save=False)
         save_to = Path(save_to)
         save_to.mkdir(parents=True, exist_ok=True)
+        return self._run(save_to, save=True)
+
+    def _run(self, folder, save):
+        save_to = folder
         inputs = self._write_inputs(save_to)
         config = inputs["config"]
         logger, watch = make_logger(self.verbose)
@@ -276,16 +324,17 @@ class DataFit:
         max_iter = config["psf"].get("max_iter", 30)
         summary = fit_summary(psf, not watch.triggered, max_iter, table, seconds)
         result = self._result(psf, table, summary, inputs, objects, candidates, stars,
-                              save_to)
+                              save_to if save else None)
         if self.diagnostics["moments"]:
             settings = {k: v for k, v in self.diagnostics.items() if k != "moments"}
             result.compute_moments(**settings)
-        result.save(save_to)
+        if save:
+            result.save(save_to)
         return result
 
     def initialize(self, save_to=None):
         """Piff's initialisation only, no fit: the start of a reference optimum without a
-        Piff run (``res.reference(starts=('zero',), given=False, refresh=...)``).
+        Piff run (``res.reference(starts=('zero',), given=False, refresh=...)``). Experimental.
 
         The same steps as `run` up to the fit (checks, working copy, catalog, Piff's Input and
         Select, the PSF), then what Piff's ``fit`` does before its first iteration
@@ -356,6 +405,9 @@ class DataFit:
         catalog_file = folder / "catalog.fits"
         piff_catalog.write(catalog_file, overwrite=True)
         config = self.piff_config(catalog_file, piff_catalog, image_file)
+        if config["input"].get("sed_file_name") == SED_FILE:
+            bandpass = galsim.roman.getBandpasses()[self.image.filter_name]
+            write_sed(folder / SED_FILE, *sample_sed(sed_from_setting(self.sed), bandpass))
         write_yaml(folder / "piff.yaml", config)
         return {"config": config, "piff_catalog": piff_catalog, "checks": checks}
 
@@ -642,8 +694,9 @@ class DataFitResult:
         """
         if x is None or y is None:
             x, y = sca_grid(n_grid)
+        stars, _ = self.fitted_stars()
         return model_moments(self.psf, x, y, self.config["sca"], algorithms, wmom_fwhm,
-                             oversample, include_pixel, size)
+                             oversample, include_pixel, size, sed_eff=fit_sed(self.psf, stars))
 
     def components(self):
         """Fitted component summaries, no truth (see `psf_fomo.piffval.components`)."""

@@ -6,7 +6,7 @@ distortion e, world axes):
 
 - ``'data'`` (native): the noisy data stamp vs the model drawn on the same stamp at the fitted
   flux and centre (what Piff's residuals are made of). Both are measured about the catalog
-  position, which wmom needs (it has no centroid fit; Phase 3).
+  position, which wmom needs (it has no centroid fit).
 - ``'truth_native'``: the noiseless truth stamp (`Simulation.render_stamp`) vs the model drawn
   at the true position (centre offset 0) with the true flux. Same weight. Isolates model error
   from noise. The truth stamp has no detector effects (IPC, ...), the data may.
@@ -75,7 +75,7 @@ def moment_residuals(psf, stars, table, sim=None, native=("wmom", "gauss"),
         and ``'truth_os'`` only.
     native : sequence of str
         Algorithms for the native comparisons (``'data'``, ``'truth_native'``). Default
-        ('wmom', 'gauss'); hsm/am mostly fail on native H158 stamps (Phase 3).
+        ('wmom', 'gauss'); hsm/am can fail on undersampled stamps (flagged).
     wmom_fwhm : float or sequence of float
         wmom weight FWHM(s), arcsec; each gives its own algorithm label ``wmom_<fwhm>``.
         Default (0.4,).
@@ -147,7 +147,10 @@ def _image_pairs(psf, star, row, sim, comparisons, oversample, include_pixel):
     """Yield (comparison, (reference star, model star)) for one star."""
     if "data" in comparisons:
         model_image = psf.drawStar(star).image
-        yield "data", (star, make_star(model_image, star.image_pos, star.weight))
+        # Fresh stars for both sides: Piff measures about star.fit.center, which is the
+        # fitted centre on Piff's star but zero (the catalog position) on a new one.
+        yield "data", (make_star(star.image, star.image_pos, star.weight),
+                       make_star(model_image, star.image_pos, star.weight))
     if "truth_native" in comparisons:
         # Render a little larger and cut to the star's own stamp: a file-based Piff run cuts
         # its stamps itself, possibly centred differently from Simulation.stars.
@@ -170,7 +173,8 @@ def _image_pairs(psf, star, row, sim, comparisons, oversample, include_pixel):
         yield "model_os", (None, make_star(model_image, model_image.true_center))
 
 
-def model_os_image(psf, star, oversample=5, include_pixel=True, size=MODEL_OS_SIZE):
+def model_os_image(psf, star, oversample=5, include_pixel=True, size=MODEL_OS_SIZE,
+                   sed_eff=None):
     """The fitted model of one star alone on a grid ``oversample`` × finer, centred.
 
     Same convention as `Simulation.truth_psf`: a ``size × oversample`` square image whose WCS
@@ -188,6 +192,8 @@ def model_os_image(psf, star, oversample=5, include_pixel=True, size=MODEL_OS_SI
         Effective PSF (True, default) or pre-pixel PSF (see `draw_model_oversampled`).
     size : int
         Size in native pixels. Default 25.
+    sed_eff : galsim.SED, optional
+        For a chromatic model, when the star has no SED (see `draw_model_oversampled`).
 
     Returns
     -------
@@ -196,11 +202,11 @@ def model_os_image(psf, star, oversample=5, include_pixel=True, size=MODEL_OS_SI
     local = star.data.local_wcs
     fine = galsim.JacobianWCS(*(local.jacobian().getMatrix().ravel() / oversample))
     template = galsim.ImageD(size * oversample, size * oversample, wcs=fine)
-    return draw_model_oversampled(psf, star, template, include_pixel)
+    return draw_model_oversampled(psf, star, template, include_pixel, sed_eff)
 
 
 def model_moments(psf, x, y, sca, algorithms=("hsm",), wmom_fwhm=(DEFAULT_WMOM_FWHM,),
-                  oversample=5, include_pixel=True, size=MODEL_OS_SIZE):
+                  oversample=5, include_pixel=True, size=MODEL_OS_SIZE, sed_eff=None):
     """Oversampled moments of the fitted model at any positions on an SCA (no data needed).
 
     Parameters
@@ -221,6 +227,9 @@ def model_moments(psf, x, y, sca, algorithms=("hsm",), wmom_fwhm=(DEFAULT_WMOM_F
         Effective PSF (True, default) or pre-pixel PSF.
     size : int
         Image size in native pixels. Default 25.
+    sed_eff : galsim.SED, optional
+        For a chromatic model: the effective SED drawn at every position. Default: that of
+        the fit's stars (`fit_sed`).
 
     Returns
     -------
@@ -231,6 +240,8 @@ def model_moments(psf, x, y, sca, algorithms=("hsm",), wmom_fwhm=(DEFAULT_WMOM_F
     for alg in algorithms:
         if alg not in ALGORITHMS:
             raise ValueError(f"algorithm {alg!r} not in {ALGORITHMS}")
+    if sed_eff is None:
+        sed_eff = fit_sed(psf)
     x, y = np.atleast_1d(x).astype(float), np.atleast_1d(y).astype(float)
     if x.shape != y.shape:
         raise ValueError("x and y must have the same shape")
@@ -240,7 +251,7 @@ def model_moments(psf, x, y, sca, algorithms=("hsm",), wmom_fwhm=(DEFAULT_WMOM_F
         target = piff.Star.makeTarget(x=xi, y=yi, wcs=psf.wcs[sca], pointing=psf.pointing,
                                       properties={"sca": sca, "chipnum": sca})
         target = psf.interpolateStar(target)
-        image = model_os_image(psf, target, oversample, include_pixel, size)
+        image = model_os_image(psf, target, oversample, include_pixel, size, sed_eff)
         star = make_star(image, image.true_center)
         for alg, fwhm in algs:
             m = measure_star(star, alg, fwhm)
@@ -292,7 +303,9 @@ def compare_fits(results, x=None, y=None, algorithms=("hsm",), wmom_fwhm=(DEFAUL
         good = first.table[first.table["flag"] == 0]
         x, y = np.asarray(good["x"], dtype=float), np.asarray(good["y"], dtype=float)
     tables = {label: model_moments(r.psf, x, y, sca, algorithms, wmom_fwhm, oversample,
-                                   include_pixel, size) for label, r in results.items()}
+                                   include_pixel, size,
+                                   sed_eff=fit_sed(r.psf, getattr(r, "_stars", None) or []))
+              for label, r in results.items()}
     ref = tables[labels[0]]
     out = []
     for label, t in tables.items():
@@ -306,7 +319,7 @@ def compare_fits(results, x=None, y=None, algorithms=("hsm",), wmom_fwhm=(DEFAUL
     return vstack(out)
 
 
-def draw_model_oversampled(psf, star, template, include_pixel=True):
+def draw_model_oversampled(psf, star, template, include_pixel=True, sed_eff=None):
     """The fitted model of one star on the grid of ``template``, centred, unit model flux.
 
     Parameters
@@ -320,6 +333,9 @@ def draw_model_oversampled(psf, star, template, include_pixel=True):
     include_pixel : bool
         True: the effective PSF (native pixel included once). False: the pre-pixel PSF,
         impossible when a component already includes the pixel (raises ValueError).
+    sed_eff : galsim.SED, optional
+        For a chromatic model: the effective SED (SED × bandpass) to draw with when the star
+        has none (e.g. a target at an arbitrary position). Default: the star's own.
 
     Returns
     -------
@@ -333,8 +349,35 @@ def draw_model_oversampled(psf, star, template, include_pixel=True):
                          "no pre-pixel image possible")
     image = template.copy()
     image.setZero()
-    prof.drawImage(image=image, method="no_pixel")  # centred on the image, as truth_psf
+    own = star.data.sed_eff
+    draw_profile(prof, image, psf, own if own is not None else sed_eff)
     return image
+
+
+def draw_profile(prof, image, psf, sed_eff=None):
+    """Draw a model profile without adding a pixel, centred on ``image``.
+
+    A chromatic profile (Piff's chromatic RomanOptics) is drawn as Piff does: times the
+    effective SED (SED × bandpass, unit flux), through a flat bandpass over the filter's range.
+    """
+    if isinstance(prof, galsim.ChromaticObject):
+        if sed_eff is None:
+            raise ValueError("a chromatic model needs an SED to be drawn (sed_eff)")
+        (prof * sed_eff).drawImage(psf.flat_bandpass, image=image, method="no_pixel")
+    else:
+        prof.drawImage(image=image, method="no_pixel")
+
+
+def fit_sed(psf, stars=()):
+    """The effective SED of the fit's stars (the first one that has one), or None.
+
+    Used to draw a chromatic model where there is no star (field maps): in this package all
+    stars of a fit share one SED (the simulation's, or the real-data SED).
+    """
+    for star in list(stars) + list(getattr(psf, "stars", None) or []):
+        if star.data.sed_eff is not None:
+            return star.data.sed_eff
+    return None
 
 
 def _row(base, comparison, algorithm, m_ref, m_mod, piff_flag):

@@ -1,9 +1,19 @@
-"""Truth PSF: Piff's Roman optical model plus the PSF error chain.
+"""Truth PSF: the Roman optical PSF plus the PSF error chain.
 
-Rendering chain for one star (CLAUDE.md §5.2):
-optical PSF (Piff ``RomanOpticalModel.getProfile`` with the truth Zernikes) → dilate → shear →
-Gaussian-kernel convolution → jitter convolution → MTF convolution → × flux → drawn with ``method='auto'`` (pixel applied
-once). Profiles are in world coordinates (arcsec), as returned by Piff/GalSim for the image WCS.
+Rendering chain for one star (docs/conventions.md):
+optical PSF → dilate → shear → Gaussian-kernel convolution → jitter convolution → MTF
+convolution → × flux → drawn with ``method='auto'`` (pixel applied once). Profiles are in world
+coordinates (arcsec), as returned by Piff/GalSim for the image WCS.
+
+The optical PSF of a star (``spatial_interpolation``):
+
+- ``'piff'``: Piff's ``RomanOpticalModel`` exactly — GalSim Roman PSFs at the SCA corners,
+  blended with position weights; a chromatic PSF is drawn through the bandpass as Piff draws it.
+- ``'fast'``: the same corner blending, but each chromatic corner PSF is first summed over the
+  filter (weighted by bandpass × SED) into an achromatic effective PSF, once per SCA and
+  observation (`effective_profile`). Stars then cost as much as monochromatic ones.
+- ``'exact'``: ``galsim.roman.getPSF`` at the star's own position, summed over the filter
+  the same way, per star.
 """
 import numpy as np
 import galsim
@@ -16,9 +26,157 @@ MTF_WEIGHTS = (0.17519, 0.53146, 0.29335)
 MTF_REL_SIGMAS = (0.4522, 0.8050, 1.4329)
 MTF_BASE_SIGMA = 0.3279  # native pixels
 
+SPATIAL_MODES = ("fast", "piff", "exact")
+
+DEFAULT_N_WAVES = 10
+# Wavelength spacing (nm) of the sum over the filter when n_waves is None.
+EXACT_STEP_NM = 5.0
+# Effective-PSF grid: the Nyquist scale at the filter's blue limit divided by this. Finer than
+# the oversampled truth images (native / 5) and than GalSim's own intermediate grid (Nyquist / 2),
+# which biases sizes by ~1e-4 when it is the coarser of two resamplings.
+EFFECTIVE_REFINE = 4
+
+
+def wavelength_nodes(bandpass, n_waves):
+    """Wavelengths (nm) at which the optical PSF is evaluated for the sum over the filter.
+
+    Parameters
+    ----------
+    bandpass : galsim.Bandpass
+        The filter; its blue and red limits are the first and last nodes.
+    n_waves : int or None
+        Number of evenly spaced nodes (≥ 2). None: one node every `EXACT_STEP_NM` nm.
+    """
+    blue, red = bandpass.blue_limit, bandpass.red_limit
+    if n_waves is None:
+        n_waves = int(round((red - blue) / EXACT_STEP_NM)) + 1
+    return np.linspace(blue, red, int(n_waves))
+
+
+def band_weights(bandpass, sed, waves):
+    """Weights of the node PSFs in the integral over the filter.
+
+    The PSF is taken as linear in wavelength between nodes (as GalSim's ``n_waves``
+    interpolation), so the integral of PSF × bandpass × SED is Σ w_k PSF(λ_k) with
+    w_k = ∫ h_k(λ) bandpass(λ) SED(λ) dλ, h_k the piecewise-linear "hat" function of node k.
+    Normalised to Σ w_k = 1 (a unit-flux PSF stays unit flux).
+
+    Parameters
+    ----------
+    bandpass : galsim.Bandpass
+    sed : galsim.SED
+        Spectral SED (any normalisation).
+    waves : numpy.ndarray
+        Nodes in nm, increasing, from the blue to the red limit.
+
+    Returns
+    -------
+    numpy.ndarray
+        One weight per node.
+    """
+    fine = np.union1d(np.linspace(bandpass.blue_limit, bandpass.red_limit, 4001), waves)
+    density = bandpass(fine) * sed(fine)
+    weights = []
+    for k in range(len(waves)):
+        integrand = np.interp(fine, waves, np.eye(len(waves))[k]) * density
+        weights.append(np.sum(0.5 * (integrand[1:] + integrand[:-1]) * np.diff(fine)))
+    weights = np.array(weights)
+    return weights / weights.sum()
+
+
+def effective_profile(chromatic, sed, bandpass, n_waves, extent):
+    """Achromatic PSF: a chromatic PSF summed over the filter, weighted by bandpass × SED.
+
+    The monochromatic PSFs at the nodes (`wavelength_nodes`) are drawn, with their weights
+    (`band_weights`), directly onto one fine grid (`EFFECTIVE_REFINE`), which becomes an
+    ``InterpolatedImage``. Every later step of the truth chain is achromatic, so drawing this
+    profile equals drawing the chromatic PSF × SED through the bandpass.
+
+    Parameters
+    ----------
+    chromatic : galsim.ChromaticObject
+        Unit-flux chromatic PSF, world coordinates.
+    sed : galsim.SED
+        The stars' SED (any normalisation).
+    bandpass : galsim.Bandpass
+    n_waves : int or None
+        Number of wavelength nodes; None = every `EXACT_STEP_NM` nm.
+    extent : float
+        Width of the grid in arcsec. Light beyond it is dropped (choose it larger than any
+        image drawn from the profile).
+
+    Returns
+    -------
+    galsim.InterpolatedImage
+        Its flux is the fraction of light inside the grid (slightly below 1).
+    """
+    waves = wavelength_nodes(bandpass, n_waves)
+    weights = band_weights(bandpass, sed, waves)
+    # The bluest PSF is the sharpest: its Nyquist scale sets the grid.
+    first = chromatic.evaluateAtWavelength(waves[0])
+    scale = first.nyquist_scale / EFFECTIVE_REFINE
+    n = 2 * int(np.ceil(extent / scale / 2))
+    image = galsim.ImageD(n, n, scale=scale)
+    for k, (wave, weight) in enumerate(zip(waves, weights)):
+        prof = first if k == 0 else chromatic.evaluateAtWavelength(wave)
+        prof.withScaledFlux(weight).drawImage(image=image, method="no_pixel", add_to_image=True)
+    return galsim.InterpolatedImage(image)
+
+
+class TruthRomanModel(piff.roman.RomanOpticalModel):
+    """Piff's Roman optical model, optionally returning effective (band-summed) corner PSFs.
+
+    Without ``sed`` it behaves exactly as Piff's ``RomanOpticalModel`` (``'piff'`` mode).
+    With ``sed`` and a chromatic model (``'fast'`` mode), each sample-point (corner) PSF is
+    replaced by its `effective_profile`, built once and reused while Piff reuses its sample
+    PSFs; Piff's position weights then blend achromatic profiles. Used for the truth only; it is
+    not a Piff configuration type.
+
+    Parameters
+    ----------
+    sed : galsim.SED, optional
+        The stars' SED. Default None (Piff's behaviour).
+    n_waves : int or None
+        Wavelength nodes of the effective PSFs (see `effective_profile`). Default 5.
+    extent : float
+        Width of the effective-PSF grids, arcsec. Default 14.
+    **kwargs
+        Passed to ``piff.roman.RomanOpticalModel``.
+    """
+
+    _type_name = None   # not registered as a Piff model type
+
+    def __init__(self, sed=None, n_waves=DEFAULT_N_WAVES, extent=14.0, **kwargs):
+        if n_waves is not None and int(n_waves) < 2:
+            raise ValueError("n_waves must be at least 2 (or None)")
+        self.sed = sed
+        self.n_waves = None if n_waves is None else int(n_waves)
+        self.extent = float(extent)
+        super().__init__(**kwargs)
+
+    def clear_cache(self):
+        super().clear_cache()
+        self._effective = {}   # sca → (Piff's sample profiles, their effective versions)
+
+    def _get_sample_profiles(self, star, params, cache=True, sca=None):
+        profiles = super()._get_sample_profiles(star, params, cache=cache, sca=sca)
+        if self.sed is None or not self.chromatic:
+            return profiles
+        # Piff returns the same tuple object while its own cache is valid, so the identity
+        # check reuses the effective PSFs exactly as long as Piff reuses its profiles.
+        key = sca if sca is not None else int(star.data.properties["sca"])
+        cached = self._effective.get(key)
+        if cached is not None and cached[0] is profiles:
+            return cached[1]
+        effective = tuple(effective_profile(p, self.sed, self.bandpass, self.n_waves,
+                                            self.extent) for p in profiles)
+        if cache:
+            self._effective[key] = (profiles, effective)
+        return effective
+
 
 def make_optical_model(filter_name, bandpass, max_zernike, linear, nominal_interp="bilinear",
-                       chromatic=False):
+                       chromatic=False, sed=None, n_waves=DEFAULT_N_WAVES, extent=14.0):
     """Piff's Roman optical model, configured to render truth PSFs.
 
     Parameters
@@ -37,12 +195,23 @@ def make_optical_model(filter_name, bandpass, max_zernike, linear, nominal_inter
     chromatic : bool
         If True the optical PSF is chromatic (wavelength-dependent); else it is evaluated at
         the bandpass effective wavelength. Default False.
+    sed : galsim.SED, optional
+        Give it for ``'fast'`` mode: corner PSFs become effective (band-summed) PSFs. Default
+        None (Piff's model, ``'piff'`` mode).
+    n_waves : int or None
+        Wavelength nodes of the effective PSFs. Default 5; None = every 5 nm.
+    extent : float
+        Width of the effective-PSF grids, arcsec. Default 14.
 
     Returns
     -------
-    piff.roman.RomanOpticalModel
+    TruthRomanModel
+        A ``piff.roman.RomanOpticalModel`` subclass.
     """
-    model = piff.roman.RomanOpticalModel(
+    model = TruthRomanModel(
+        sed=sed,
+        n_waves=n_waves,
+        extent=extent,
         chromatic=chromatic,
         filter_name=filter_name,
         max_zernike=max_zernike,
@@ -54,12 +223,58 @@ def make_optical_model(filter_name, bandpass, max_zernike, linear, nominal_inter
     return model
 
 
+def position_profile(sca, filter_name, bandpass, x, y, wcs, zernikes, sed=None,
+                     n_waves=DEFAULT_N_WAVES, extent=14.0):
+    """Optical PSF from ``galsim.roman.getPSF`` at the star's own position (``'exact'`` mode).
+
+    Called as Piff's model calls ``getPSF`` (same pupil binning, the image WCS at the
+    position, extra aberrations indexed by Noll number), but at the star instead of the SCA
+    corners: GalSim interpolates its design aberrations to the position.
+
+    Parameters
+    ----------
+    sca : int
+        SCA number, 1 … 18.
+    filter_name : str
+        GalSim Roman filter name.
+    bandpass : galsim.Bandpass
+    x, y : float
+        Position in native pixels.
+    wcs : galsim.BaseWCS
+        WCS of the SCA image.
+    zernikes : array_like
+        Extra aberrations Z4 … Z_max at the star, waves.
+    sed : galsim.SED, optional
+        For a chromatic PSF: the stars' SED; the result is the `effective_profile`. None: the
+        monochromatic PSF at the bandpass effective wavelength.
+    n_waves : int or None
+        Wavelength nodes of the effective PSF. Default 5.
+    extent : float
+        Width of the effective-PSF grid, arcsec. Default 14.
+
+    Returns
+    -------
+    galsim.GSObject
+        Unit-flux (effective) optical PSF in world coordinates, without the pixel response.
+    """
+    zernikes = np.asarray(zernikes, dtype=float)
+    extra = np.zeros(len(zernikes) + 4)
+    extra[4:] = zernikes
+    psf = galsim.roman.getPSF(
+        sca, filter_name, SCA_pos=galsim.PositionD(x, y),
+        pupil_bin=piff.roman.roman_psf.pupil_bin, wcs=wcs, extra_aberrations=extra,
+        wavelength=None if sed is not None else bandpass.effective_wavelength)
+    if sed is None:
+        return psf
+    return effective_profile(psf, sed, bandpass, n_waves, extent)
+
+
 def optical_profile(model, params, x, y, sca, wcs, pointing=None):
     """Optical PSF at an SCA position from Piff's Roman model.
 
     Parameters
     ----------
-    model : piff.roman.RomanOpticalModel
+    model : TruthRomanModel
         Model from `make_optical_model`.
     params : numpy.ndarray
         Extra Zernike aberrations Z4 … Z_max in waves (length max_zernike − 3), or for a

@@ -11,7 +11,8 @@ def test_defaults():
     c = sim.config
     assert c["scas"] == [1] and c["n_stars"] == 1 and c["n_obs"] == 1
     assert c["mtf"] == {"scale": 1.0, "sigma_obs": 0.0, "sigma_field": 0.0}
-    assert c["jitter"] is None and c["chromatic"] is None
+    assert c["jitter"] is None
+    assert c["chromatic"] == {"sed": "flat", "wave_type": "nm", "flux_type": "fphotons"}
     assert c["noise"] == {"kind": "gaussian", "sigma": 1.0}
     assert c["wcs"]["kind"] == "simple"
 

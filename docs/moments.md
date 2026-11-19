@@ -54,6 +54,7 @@ same = load_moments("out/moments01")
 Piff's global shape method (`piff.set_shape_method`) is never changed.
 
 ## Conventions (all algorithms)
+Full definitions in [conventions.md](conventions.md#moments).
 - `sigma` [native pix] = det(M)^¼; `T` [native pix²] = Mxx + Myy (trace)
   = 2 sigma² (1 + g²)/(1 − g²).
 - `e1, e2` = distortion (Mxx − Myy, 2 Mxy)/T; `g1, g2` = reduced shear; world (u, v) axes.
@@ -89,12 +90,6 @@ Piff's global shape method (`piff.set_shape_method`) is never changed.
 
 ## Saved folder
 `moments.fits` (the table) and `config.yaml` (configuration + provenance).
-
-## Which algorithm on native images?
-Results of the Phase 3 tests (H158) are in `docs/notes/moments_findings.md`. In short:
-hsm/am fail on most native stamps; gauss is close on average but scatters per star; wmom is
-stable but responds only partly to PSF errors and has no centroid fit (measure data and
-model about the same position). An empirical gauss-based scale factor for wmom works well.
 
 ## Limitations
 - Each star is re-rendered for the noiseless stamp (always, for the S/N) and for the

@@ -3,13 +3,12 @@
 With ``truth=False`` (real data) the tables hold the fitted values only.
 
 - optics (``RomanOptics``): fitted extra Zernikes at each star vs the catalog truth (waves).
-- kernel (``GaussianMoments`` or Piff ``Gaussian``): the kernel's second moments M at each
-  star in native pix² (world axes) vs the truth kernel (catalog ``kernel_*``, 0 if none).
-  Piff's ``Gaussian`` (scale σ in arcsec, reduced shear g) is converted with
-  M = σ² A Aᵀ / pixel_scale², A = the shear matrix. A positive ``GaussianMoments`` reports the
-  PSD-clipped M it actually draws (``clipped`` marks stars where that differs from the
-  parameters). Piff's ``GaussianBlur`` ([ixx, iyy, ixy] arcsec²) reports its PSD projection
-  converted to pix², ``clipped`` likewise.
+- kernel (``GaussianMoments``, Piff ``GaussianBlur`` or Piff ``Gaussian``): the kernel's
+  second moments M at each star in native pix² (world axes) vs the truth kernel (catalog
+  ``kernel_*``, 0 if none). Piff's ``Gaussian`` (scale σ in arcsec, reduced shear g) is
+  converted with M = σ² A Aᵀ / pixel_scale², A = the shear matrix. Piff's ``GaussianBlur``
+  ([ixx, iyy, ixy] arcsec²) reports the PSD projection it actually draws, converted to pix²
+  (``clipped`` marks stars where that differs from the parameters).
 - pixelgrid (``PixelGrid``): the grid's net flux in the unit model and its largest value.
 """
 import numpy as np
@@ -18,7 +17,7 @@ import galsim.roman
 import piff
 from astropy.table import Table
 
-from ..sim.psf import clip_to_psd, gaussian_kernel
+from ..sim.psf import gaussian_kernel
 from .config import blur_moments
 
 PIXEL_SCALE = galsim.roman.pixel_scale
@@ -133,10 +132,7 @@ def kernel_moments(leaf, params):
         # Raw [ixx, iyy, ixy] arcsec² may be non-PSD; the model draws their PSD projection.
         drawn = leaf.model.constrain_params(params)
         return blur_moments(drawn), not np.allclose(drawn, params, rtol=0, atol=1e-16)
-    if leaf.model.signed:
-        return tuple(params), False
-    clipped = clip_to_psd(*params)
-    return clipped, not np.allclose(clipped, params, rtol=0, atol=1e-12)
+    return tuple(params), False  # GaussianMoments: signed, drawn as given
 
 
 def kernel_table(leaf, stars, rows, truth=True):
@@ -184,8 +180,11 @@ def pixelgrid_table(leaf, stars, rows):
     return out
 
 
-def component_image(psf, leaf, x, y, sca, oversample=5, size=25):
+def component_image(psf, leaf, x, y, sca, oversample=5, size=25, sed_eff=None):
     """Image of one component's unit profile at an SCA position, on a fine grid.
+
+    A chromatic component (Piff's chromatic RomanOptics) is drawn with the effective SED
+    ``sed_eff``, by default that of the fit's stars (`residuals.fit_sed`).
 
     Parameters
     ----------
@@ -208,6 +207,9 @@ def component_image(psf, leaf, x, y, sca, oversample=5, size=25):
         Drawn without adding a pixel (a PixelGrid already contains it; optics / kernel /
         MTF are shown pre-pixel), except Piff's GaussianBlur, which is integrated over each
         fine pixel: near zero blur it is a near-delta that point sampling cannot represent.
+        For the drawing only, its moments get a floor of (0.1 fine pixel)² per axis, so a
+        zero blur is drawn as a Gaussian 0.1 fine pixel wide (the fitted values are not
+        changed).
     """
     wcs = psf.wcs[sca]
     target = piff.Star.makeTarget(x=x, y=y, wcs=wcs, pointing=psf.pointing,
@@ -217,15 +219,22 @@ def component_image(psf, leaf, x, y, sca, oversample=5, size=25):
     if leaf.model._type_name == "GaussianBlur":
         # GaussianBlur exists only in k-space; near zero blur its maxk is unbounded, so a
         # pre-pixel drawing would need a huge FFT. Draw the same Gaussian in real space, and
-        # integrate it over each fine pixel: at zero blur it is a near-delta (σ floored at
-        # 1e-6 pix), which point sampling at pixel centres turns into one enormous value.
+        # integrate it over each fine pixel: at zero blur it is a near-delta, which point
+        # sampling at pixel centres turns into one enormous value. Integrating an exact delta
+        # needs an FFT of the pixel itself (~80000² at 3× oversampling), so the drawn kernel
+        # gets a floor of 0.1 fine pixel in σ: invisible in a plot, image sum still 1.
         m, _ = kernel_moments(leaf, target.fit.get_params(leaf._num))
-        prof = gaussian_kernel(*m)
+        floor = (0.1 / oversample) ** 2           # native pix², added per axis
+        prof = gaussian_kernel(m[0] + floor, m[1], m[2] + floor)
         method = "auto"
     else:
         prof, _ = leaf._getRawProfile(target)
     local = wcs.local(galsim.PositionD(x, y))
     fine = galsim.JacobianWCS(*(local.jacobian().getMatrix().ravel() / oversample))
     image = galsim.ImageD(size * oversample, size * oversample, wcs=fine)
-    prof.drawImage(image=image, method=method)
+    if isinstance(prof, galsim.ChromaticObject):
+        from .residuals import draw_profile, fit_sed
+        draw_profile(prof, image, psf, sed_eff if sed_eff is not None else fit_sed(psf))
+    else:
+        prof.drawImage(image=image, method=method)
     return image

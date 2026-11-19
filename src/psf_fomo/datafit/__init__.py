@@ -1,16 +1,18 @@
 """Piff fits of real Roman images (kept separate from the simulation validation, `piffval`).
 
-- `L2Image`: one L2 exposure of one SCA in the FITS layout of the user's ASDF → FITS
-  converter (image variant, weights, sky, checks).
+- `L2Image`: one L2 exposure of one SCA, converted from ASDF to FITS (image variant,
+  weights, sky, checks).
 - `StarCatalog`: the detection catalog, star selection (Piff SizeMag, all, or a column) and
   Piff's cuts; `StarCatalog.measure` / `measure_objects`: moments of every detection before
   any fit (+ a selection preview); `plot_size_mag`; `StarCatalog.select_locus` /
-  `select_locus`: our own stellar-locus selection (field-dependent locus, saturation turn,
-  per-star reasons), `plot_locus`.
+  `select_locus`: stellar-locus selection (experimental; field-dependent locus, saturation
+  turn, per-star reasons), `plot_locus`.
 - `DataFit`: runs Piff (Input → Select → fit) on an image + catalog with a `FitConfig`;
   `DataFitResult`, `load_data_fit`: results, saved and reloaded.
 - `DataReferenceSolver`, `reference_from_data_fit` (also `DataFitResult.reference`): the
   joint χ² optimum of the fitted model, centres held at Piff's fitted ones.
+- `psf_fomo.datafit.synthetic`: write a simulation (or any image) as an L2 file and a
+  detection catalog, to try this workflow without real data.
 
 Shares only truth-free functions with `psf_fomo.piffval` (``FitConfig``, ``fitting``,
 ``residuals``, ``components``, ``plotting``) and the reference solver.

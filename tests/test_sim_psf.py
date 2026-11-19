@@ -23,7 +23,7 @@ def unweighted_moments(prof, scale, n):
 
 
 def test_mtf_kernel_variance():
-    # CLAUDE.md §5.3: per-axis variance ≈ 0.106 pix², mtf_scale 1.1 adds ≈ 0.022 pix².
+    # Per-axis variance ≈ 0.106 pix²; mtf_scale 1.1 adds ≈ 0.022 pix² (docs/conventions.md).
     analytic = sum(w * (r * MTF_BASE_SIGMA) ** 2 for w, r in zip(MTF_WEIGHTS, MTF_REL_SIGMAS))
     np.testing.assert_allclose(analytic, 0.106, atol=1e-3)
     ixx, ixy, iyy = unweighted_moments(mtf_kernel(1.0), 0.02, 300)

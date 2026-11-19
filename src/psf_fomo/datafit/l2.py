@@ -1,4 +1,4 @@
-"""Roman L2 images in the FITS layout written by the user's ASDF → FITS converter.
+"""Roman L2 images converted from ASDF to FITS (the converter is not part of psf-fomo).
 
 Layout (HDUs found by EXTNAME; see ``docs/datafit.md``):
 
@@ -30,8 +30,7 @@ Pixel frames. Roman's L2 products are in the "science" frame (Roman documentatio
 "Coordinate Systems"): each detector's readout frame flipped along one axis so that all SCAs
 look alike. ``galsim.roman`` (and so Piff's RomanOptics) uses a frame mirrored relative to it,
 which RomanOptics needs (its aberration field is evaluated at the star's pixel position).
-Measured on real files with the exposure's own pointing (`compare_frames`; SCA 11: y flip,
-1.0″ rms; SCA 3: x flip, 1.3″), and as the RDox figure shows for all SCAs:
+Following the RDox figure (`compare_frames` checks it on a file):
 
 - y flip (y_GalSim = n + 1 − y_L2) for SCAs 1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17;
 - x flip (x_GalSim = n + 1 − x_L2) for SCAs 3, 6, 9, 12, 15, 18.
@@ -81,7 +80,7 @@ def flip_axis(sca):
 
 
 class L2Image:
-    """One Roman L2 exposure of one SCA (FITS layout of the user's converter).
+    """One Roman L2 exposure of one SCA (FITS layout described in the module docstring).
 
     Parameters
     ----------
@@ -463,6 +462,8 @@ class L2Image:
     def compare_frames(self, pointing=None, date=None):
         """Map this file's pixels onto ``galsim.roman``'s SCA frame using the exposure's pointing.
 
+        Experimental.
+
         See `compare_frames` (module function). Needs a full-SCA image (4088 × 4088).
         ``pointing`` defaults to this image's `pointing` (header or constructor), which must
         then hold all six values.
@@ -596,6 +597,8 @@ def flip_wcs_header(header, axis, shape):
 
 def compare_frames(wcs, sca, shape, pointing, date=None, n_grid=7):
     """Which pixel mapping takes a full-SCA image onto ``galsim.roman``'s SCA frame.
+
+    Experimental.
 
     A grid of pixels goes to the sky through ``wcs`` and, after each candidate mapping (as-is,
     flip x, flip y, rotate 180), through ``galsim.roman.getWCS`` for the exposure's own

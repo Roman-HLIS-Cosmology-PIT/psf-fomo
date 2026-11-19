@@ -4,10 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "psf-fomo"
-version = "0.0.1"
+version = "0.1.0"
 description = "PSF simulation, moments validation and Piff validation test bench for Roman WFI"
 readme = "README.md"
 license = { file = "LICENSE" }
+authors = [{ name = "Federico Berlfein" }]
 requires-python = ">=3.10"
 # Piff is deliberately not listed: install the pinned clone of Piff `main` yourself
 # (see README). The PyPI release is older than the version this package is built against.
@@ -17,7 +18,7 @@ dependencies = [
     "astropy",
     "matplotlib",
     "pyyaml",
-    "galsim",
+    "galsim>=2.8",
 ]
 
 [project.optional-dependencies]

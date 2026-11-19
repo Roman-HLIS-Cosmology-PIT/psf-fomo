@@ -32,16 +32,21 @@ from ..sim import noise as noise_mod
 from ..sim import storage
 from . import components as components_mod
 from . import diagnostics, plotting
-from .config import FitConfig
+from .config import FitConfig, needs_star_seds
 # Shared with real-data fits; imported here so `psf_fomo.piffval.run.<name>` keeps working.
 from .fitting import NOT_CONVERGED, choose_reserve, make_logger, piff_shape_method  # noqa: F401
-from .residuals import (COMPARISONS, MODEL_OS_SIZE, model_moments, moment_residuals,
+from .fitting import DEFAULT_MIN_SEP, apply_cuts, make_cuts, select_config
+from .residuals import (COMPARISONS, MODEL_OS_SIZE, fit_sed, model_moments, moment_residuals,
                         moment_summary, sca_grid)
 
 DEFAULT_DIAGNOSTICS = {"moments": True, "native": ["wmom", "gauss"],
                        "wmom_fwhm": [DEFAULT_WMOM_FWHM], "oversampled": ["hsm"],
                        "oversample": 5, "include_pixel": True,
                        "comparisons": list(COMPARISONS)}
+# Default cuts: stars with a neighbour within 2.5″ are rejected; no S/N cap on the weights
+# (Piff's default of 100 would down-weight every bright star).
+DEFAULT_CUTS = make_cuts(min_sep=DEFAULT_MIN_SEP, max_snr_weight=0.0)
+REJECTED_COLUMNS = ("obs", "sca", "star_id", "x", "y", "mag")
 
 
 class PiffValidation:
@@ -81,15 +86,54 @@ class PiffValidation:
             raise ValueError(f"observations must be in 0..{n_obs - 1}")
         self.name = name
         self.reserve = {"frac": 0.0, "seed": 0}
+        self.cuts = dict(DEFAULT_CUTS)
         self.diagnostics = copy.deepcopy(DEFAULT_DIAGNOSTICS)
         self.verbose = 0
+
+    def set_cuts(self, min_sep=DEFAULT_MIN_SEP, min_snr=None, max_snr_weight=0.0,
+                 max_edge_frac=None, stamp_center_size=None, max_mask_pixels=None,
+                 max_pixel_cut=None, reject_where=None, nstars=None):
+        """Piff's rejection cuts, as for real data (`psf_fomo.datafit.StarCatalog.set_cuts`).
+
+        Applied to each observation separately (a neighbour counts only in the same
+        exposure), in memory and in file-based runs alike. Rejected stars are not fitted and
+        not diagnosed; they are listed in `FitResult.rejected`. Without a call the defaults
+        apply: ``min_sep`` 2.5″ and no S/N cap. ``set_cuts(None)`` turns every cut off.
+
+        Parameters
+        ----------
+        min_sep : float or None
+            Reject stars with any other star of the same observation within this distance,
+            arcsec. Default 2.5 (a 25-pixel stamp reaches 1.9″ at its corners, plus the PSF
+            wings). None: no separation cut.
+        min_snr : float, optional
+            Minimum S/N (Piff's estimate from the stamp and weight).
+        max_snr_weight : float
+            Piff caps each star's effective S/N at this value by inflating its variance.
+            Default 0 = no cap (Piff's own default is 100).
+        max_edge_frac, stamp_center_size : float, optional
+            Reject stars with more than this flux fraction outside a radius of
+            ``stamp_center_size`` pixels (Piff's default radius 13).
+        max_mask_pixels : int, optional
+            Reject stars with at least this many zero-weight pixels.
+        max_pixel_cut : float, optional
+            Reject stars brighter than the flux whose typical peak pixel is this value, ADU.
+        reject_where : str, optional
+            Piff ``reject_where`` expression on star properties (e.g. ``'star_id < 10'``).
+        nstars : int, optional
+            Keep at most this many stars per observation (highest S/N).
+        """
+        self.cuts = make_cuts(min_sep=min_sep, min_snr=min_snr, max_snr_weight=max_snr_weight,
+                              max_edge_frac=max_edge_frac, stamp_center_size=stamp_center_size,
+                              max_mask_pixels=max_mask_pixels, max_pixel_cut=max_pixel_cut,
+                              reject_where=reject_where, nstars=nstars)
 
     def set_reserve(self, frac=0.2, seed=0):
         """Hold out a fraction of the stars from the fit (Piff's ``is_reserve``).
 
         As Piff's ``select.reserve_frac``: ``int(frac × N)`` stars (rounded down), chosen at
-        random without replacement. Reserve stars are not used to fit the model, but are
-        interpolated, refluxed and diagnosed like the others.
+        random without replacement among the stars that pass the cuts. Reserve stars are not
+        used to fit the model, but are interpolated, refluxed and diagnosed like the others.
 
         Parameters
         ----------
@@ -144,16 +188,43 @@ class PiffValidation:
     def config(self):
         """Settings of this validation run as a plain dict (saved with the result)."""
         return {"name": self.name, "simulation": self.sim_path, "sca": self.sca,
-                "obs": self.obs, "reserve": dict(self.reserve),
+                "obs": self.obs, "reserve": dict(self.reserve), "cuts": dict(self.cuts),
                 "diagnostics": copy.deepcopy(self.diagnostics),
                 "fit": copy.deepcopy(self.fit_config.config),
                 "piff_psf": self.fit_config.piff_config(self.sim.config["filter"])}
 
-    def stars(self):
-        """Piff stars of the selected SCA and observations, reserve marked, and their rows."""
-        return simulation_stars(self.sim, self.sca, self.obs, **self.reserve)
+    def stars(self, logger=None):
+        """Piff stars of the SCA and observations that pass the cuts, reserve marked, and
+        their catalog rows."""
+        stars, rows, _ = self.select(logger)
+        return stars, rows
+
+    def select(self, logger=None):
+        """Apply the cuts (`set_cuts`) and the reserve choice to the simulation's stars.
+
+        Returns
+        -------
+        stars : list of piff.Star
+            Kept stars, reserve marked.
+        rows : astropy.table.Table
+            Their simulation catalog rows.
+        rejected : astropy.table.Table
+            Rejected stars: ``obs``, ``sca``, ``star_id``, ``x``, ``y``, ``mag``.
+        """
+        return cut_simulation_stars(self.sim, self.sca, self.obs, self.cuts, logger=logger,
+                                    **self.reserve)
+
+    def check_chromatic(self):
+        """Raise if the model is chromatic but the simulated stars have no SED."""
+        piff_dict = self.fit_config.piff_config(self.sim.config["filter"])
+        if needs_star_seds(piff_dict) and self.sim.config["chromatic"] is None:
+            raise ValueError(
+                "the Piff model is chromatic (RomanOptics, Piff's default) but the simulation "
+                "is monochromatic, so its stars have no SED: use "
+                "FitConfig.set_optics(..., chromatic=False), or a chromatic simulation")
 
     def _make_psf(self, logger):
+        self.check_chromatic()
         truth = self.sim.truth
         piff_dict = self.fit_config.piff_config(self.sim.config["filter"])
         psf = piff.PSF.process(copy.deepcopy(piff_dict), logger=logger)
@@ -175,8 +246,8 @@ class PiffValidation:
         rows : astropy.table.Table
             Their simulation catalog rows.
         """
-        stars, rows = self.stars()
         logger, _ = make_logger(self.verbose)
+        stars, rows = self.stars(logger)
         psf, _ = self._make_psf(logger)
         shape = self.fit_config.config["shape_method"]
         with piff_shape_method(shape["method"], shape["weight_fwhm"]):
@@ -212,10 +283,13 @@ class PiffValidation:
         - Weight = 1 / ``BKGVAR`` (header: the SCA's median background variance; in memory
           each star uses its own ``bkg_var`` — identical for Gaussian noise). ``gain`` (header
           ``GAIN``) only when star shot noise is simulated, as in memory.
-        - ``select.max_snr_weight: 0`` turns off Piff's default down-weighting of stars with
-          S/N > 100, so both modes fit the same χ². Reserve: Piff's ``reserve_frac`` + ``seed``
-          (a different random choice than in memory).
+        - ``select``: the cuts of `set_cuts` (by default ``min_sep`` 2.5″ and
+          ``max_snr_weight: 0``, which turns off Piff's default down-weighting of stars with
+          S/N > 100), the same as in memory. Reserve: Piff's ``reserve_frac`` + ``seed`` (a
+          different random choice than in memory).
         - Pointing for the Roman WCS: the simulation's (``ra`` given to Piff in hours).
+        - Chromatic simulations: ``sed_file_name`` (the SED file saved with the simulation),
+          ``sed_wave_type``, ``sed_flux_type``, so every star has the simulation's SED.
         """
         sim = self.sim
         scas = sim.config["scas"]
@@ -238,9 +312,12 @@ class PiffValidation:
                        dec_units="deg", ra=wcs["ra"] / 15.0, dec=wcs["dec"])
         if noise_mod.star_gain(sim.config["noise"]) is not None:
             inp["gain"] = "GAIN"
+        # Chromatic simulation: every star gets its SED (the file saved with the simulation).
+        inp.update(storage.piff_sed_input(sim.config["chromatic"]))
         shape = self.fit_config.config["shape_method"]
         config = {"modules": ["psf_fomo.models"], "input": inp,
-                  "select": {"max_snr_weight": 0.0, "reserve_frac": self.reserve["frac"],
+                  "select": {**select_config(self.cuts),
+                             "reserve_frac": self.reserve["frac"],
                              "seed": self.reserve["seed"]},
                   "psf": self.fit_config.piff_config(sim.config["filter"]),
                   "output": {"dir": str(out_dir), "file_name": "psf.fits"},
@@ -274,20 +351,22 @@ class PiffValidation:
         piff_dict = self.fit_config.piff_config(self.sim.config["filter"])
         t0 = time.time()
         if mode == "memory":
-            stars, rows = self.stars()
+            stars, rows, rejected = self.select(logger)
             psf, _ = self._make_psf(logger)
             with piff_shape_method(shape["method"], shape["weight_fwhm"]):
                 psf.fit(stars, logger=logger)
         else:
-            psf, rows = self._run_files(save_to, logger)
+            psf, rows, rejected = self._run_files(save_to, logger)
         seconds = time.time() - t0
         table = diagnostics.star_table(psf, psf.stars, rows)
         max_iter = piff_dict.get("max_iter", 30)
         summary = diagnostics.fit_summary(psf, not watch.triggered, max_iter, table, seconds)
+        summary["n_input"] = len(rows) + len(rejected)
+        summary["n_rejected"] = len(rejected)
         config = self.config()
         config["mode"] = mode
         result = FitResult(psf, table, summary, config, provenance(), sim=self.sim,
-                           stars=psf.stars, rows=rows)
+                           stars=psf.stars, rows=rows, rejected=rejected)
         if self.diagnostics["moments"]:
             settings = {k: v for k, v in self.diagnostics.items() if k != "moments"}
             result.compute_moments(**settings)
@@ -301,6 +380,7 @@ class PiffValidation:
             raise ValueError("mode='files' needs save_to (Piff reads and writes files)")
         if len(self.obs) != 1:
             raise ValueError("mode='files' fits one observation: give obs=<index>")
+        self.check_chromatic()
         save_to = Path(save_to)
         save_to.mkdir(parents=True, exist_ok=True)
         if self.sim_path is None:
@@ -315,8 +395,13 @@ class PiffValidation:
             psf = piff.config.process(copy.deepcopy(piff_config), logger)
         catalog = self.sim.catalog(obs, self.sca)
         index = {int(r["star_id"]): i for i, r in enumerate(catalog)}
-        rows = catalog[[index[int(s.data.properties["star_id"])] for s in psf.stars]]
-        return psf, rows
+        used = [index[int(s.data.properties["star_id"])] for s in psf.stars]
+        rows = catalog[used]
+        # Stars Piff's input or cuts left out (with the Roman WCS, input also drops stars
+        # whose stamp is not on the image, which the simulation's edge margin prevents).
+        dropped = np.ones(len(catalog), dtype=bool)
+        dropped[used] = False
+        return psf, rows, rejected_table(catalog[dropped])
 
 
 class FitResult:
@@ -341,10 +426,13 @@ class FitResult:
     sim : Simulation or None
         The simulation, if available (after `load_fit` only when its folder was recorded,
         or when passed to `load_fit`). Needed for moments, components and image plots.
+    rejected : astropy.table.Table or None
+        Stars removed by the cuts (`PiffValidation.set_cuts`): ``obs``, ``sca``,
+        ``star_id``, ``x``, ``y``, ``mag``. None for fits saved before the cuts existed.
     """
 
     def __init__(self, psf, table, fit_summary, config, provenance, sim=None, stars=None,
-                 rows=None, moments=None):
+                 rows=None, moments=None, rejected=None):
         self.psf = psf
         self.table = table
         self.fit_summary = fit_summary
@@ -352,6 +440,7 @@ class FitResult:
         self.provenance = provenance
         self.sim = sim
         self.moments = moments
+        self.rejected = rejected
         self._stars = stars
         self._rows = rows
 
@@ -405,12 +494,16 @@ class FitResult:
         """Oversampled model moments across the SCA (see `residuals.model_moments`).
 
         Positions: ``x``, ``y`` (native pixels) if given, else the centres of an
-        ``n_grid`` × ``n_grid`` grid of cells covering the SCA. Needs no simulation.
+        ``n_grid`` × ``n_grid`` grid of cells covering the SCA. Needs no simulation, except
+        for a chromatic model reloaded from disk (the SED comes from the simulation's stars).
         """
         if x is None or y is None:
             x, y = sca_grid(n_grid)
+        stars = self._stars if self._stars is not None or self.sim is None \
+            else self.fitted_stars()[0]
         return model_moments(self.psf, x, y, self.config["sca"], algorithms, wmom_fwhm,
-                             oversample, include_pixel, size)
+                             oversample, include_pixel, size,
+                             sed_eff=fit_sed(self.psf, stars or []))
 
     def moment_summary(self, columns=("dT_T", "de1", "de2")):
         """Mean, std, error on the mean, n, n_flagged per (set, comparison, algorithm)."""
@@ -475,12 +568,15 @@ class FitResult:
         return plotting.plot_zernikes(self)
 
     def save(self, path):
-        """Save to a folder: ``psf.fits`` (Piff), ``stars.fits``, ``moments.fits`` (if
-        computed), ``config.yaml`` (run settings, fit summary, provenance)."""
+        """Save to a folder: ``psf.fits`` (Piff), ``stars.fits``, ``rejected.fits``,
+        ``moments.fits`` (if computed), ``config.yaml`` (run settings, fit summary,
+        provenance)."""
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
         self.psf.write(str(path / "psf.fits"))
         self.table.write(path / "stars.fits", overwrite=True)
+        if self.rejected is not None:
+            self.rejected.write(path / "rejected.fits", overwrite=True)
         if self.moments is not None:
             self.moments.write(path / "moments.fits", overwrite=True)
         write_yaml(path / "config.yaml", {"config": self.config,
@@ -510,17 +606,48 @@ def load_fit(path, sim=None, load_sim=True):
     psf = piff.read(str(path / "psf.fits"))
     table = Table.read(path / "stars.fits")
     moments = Table.read(path / "moments.fits") if (path / "moments.fits").exists() else None
+    rejected = (Table.read(path / "rejected.fits") if (path / "rejected.fits").exists()
+                else None)
     sim_path = saved["config"].get("simulation")
     if sim is None and load_sim and sim_path:
         sim = load_simulation(sim_path)
     return FitResult(psf, table, saved["fit_summary"], saved["config"], saved["provenance"],
-                     sim=sim, moments=moments)
+                     sim=sim, moments=moments, rejected=rejected)
+
+
+def cut_simulation_stars(sim, sca, obs, cuts, frac=0.0, seed=0, logger=None):
+    """Stars of one SCA that pass the cuts, observation by observation, reserve marked.
+
+    Returns
+    -------
+    stars, rows, rejected
+        Kept stars (in catalog order), their catalog rows, and the rejected stars
+        (`rejected_table`). See `PiffValidation.set_cuts` and `set_reserve`.
+    """
+    stars, rows, rejected = [], [], []
+    for o in obs:
+        s, r = sim.stars(sca=sca, obs=o)
+        kept, keep = apply_cuts(s, cuts, logger)
+        stars += kept
+        rows.append(r[keep])
+        rejected.append(r[~keep])
+    if not stars:
+        raise ValueError("the cuts rejected every star (see PiffValidation.set_cuts)")
+    for star, flag in zip(stars, choose_reserve(len(stars), frac, seed)):
+        star.data.properties["is_reserve"] = bool(flag)
+    return stars, vstack(rows), rejected_table(vstack(rejected))
+
+
+def rejected_table(rows):
+    """The identifying columns of rejected catalog rows (those present)."""
+    return rows[[c for c in REJECTED_COLUMNS if c in rows.colnames]]
 
 
 def simulation_stars(sim, sca, obs, frac=0.0, seed=0):
-    """Stars of one SCA and the given observations, in a fixed order, reserve marked.
+    """Stars of one SCA and the given observations, in a fixed order, reserve marked, no cuts.
 
-    Returns (stars, rows); see `PiffValidation.set_reserve` for the reserve rule.
+    Returns (stars, rows); see `PiffValidation.set_reserve` for the reserve rule. Used to
+    re-cut the images of a saved fit (`FitResult.fitted_stars`).
     """
     stars, rows = [], []
     for o in obs:

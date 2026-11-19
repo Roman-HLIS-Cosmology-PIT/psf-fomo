@@ -1,9 +1,10 @@
 # Piff validation module (`psf_fomo.piffval`)
 
-Fits simulated stars with Piff under chosen model options and reports diagnostics.
-**Status (Phase 4, step D):** model builder, in-memory and file-based fits of one SCA, flux /
-centroid / χ² diagnostics, convergence flag, moment residuals (several algorithms), component
-summaries, plots, save/load, reference optimum, ρ statistics.
+Fits simulated stars with Piff under chosen model options and reports diagnostics: model
+builder, in-memory and file-based fits of one SCA, flux / centroid / χ² diagnostics,
+convergence flag, moment residuals (several algorithms), component summaries, plots,
+save/load, reference optimum, ρ statistics. Units and definitions:
+[conventions.md](conventions.md).
 
 ## Quick start
 
@@ -15,7 +16,7 @@ s = RomanSimulation(n_stars=30, seed=1); s.add_kernel(0.03, 0.0, 0.02); sim = s.
 
 cfg = FitConfig()
 cfg.set_optics("pinned")                 # or "free", max_zernike=11, prior_sigma=0.05
-cfg.add_kernel("signed", order=0)        # GaussianMoments; "positive", or Piff "gaussian"
+cfg.add_kernel("signed", order=0)        # GaussianMoments; or Piff "blur", "gaussian"
 # cfg.add_pixelgrid(size=5, scale=0.11, order=1)
 # cfg.set_outliers(chisq_nsigma=4, max_centroid=0.5)
 # cfg.set_piff_shape_method("gauss")     # Piff's internal method; default "hsm"
@@ -44,45 +45,73 @@ Generated Piff structure (pieces left out when not requested):
 
 | method | what | default |
 |---|---|---|
-| `set_optics(mode, max_zernike, prior_sigma, aberration_interp, nominal_interp)` | `'free'`: Z4…Z_max fitted per SCA, Gaussian prior toward 0 of width `prior_sigma` waves (scalar, one per Zernike, or None = no prior). `'pinned'`: held at 0 (nominal optics) by σ = 1e-10 on Z4 only | free, Z4–Z22, 0.05, constant, bilinear (Piff defaults) |
-| `set_mtf(on)` | fixed `GaussianMixture` with the §5.3 constants (sigmas in arcsec), `interp: Fixed`; cannot be fitted | on |
-| `add_kernel(kind, order, init, max_nfev, interp)` | `'signed'` / `'positive'`: `GaussianMoments` (M in pix², flux and centre fixed in its fit); `'gaussian'`: Piff `Gaussian` (its fit also moves flux and centre); `'blur'`: Piff `GaussianBlur` (Piff branch `gaussian_blur` only, see below); interpolator of `order`, `interp='Polynomial'` or (blur only) `'BasisPolynomial'` | none |
+| `set_optics(mode, max_zernike, prior_sigma, aberration_interp, nominal_interp, chromatic)` | `'free'`: Z4…Z_max fitted per SCA, Gaussian prior toward 0 of width `prior_sigma` waves (scalar, one per Zernike, or None = no prior). `'pinned'`: held at 0 (nominal optics) by σ = 1e-10 on Z4 only. `chromatic`: None = Piff's default (True), or True / False | free, Z4–Z22, 0.05, constant, bilinear, Piff's chromatic default |
+| `set_mtf(on)` | fixed `GaussianMixture` with the simulation's MTF constants ([conventions](conventions.md#simulated-psf-truth); sigmas in arcsec), `interp: Fixed`; cannot be fitted | on |
+| `add_kernel(kind, order, init, max_nfev, interp)` | `'signed'`: our `GaussianMoments` (M in pix², either sign, flux and centre fixed in its fit); `'blur'`: Piff `GaussianBlur` (broadens only, see below); `'gaussian'`: Piff `Gaussian` (its fit also moves flux and centre); interpolator of `order`, `interp='Polynomial'` or (blur only) `'BasisPolynomial'` | none |
 | `add_pixelgrid(size, scale, order, interp, centered, init)` | `PixelGrid` in a Sum, `BasisPolynomial` | none |
 | `set_outliers(chisq_nsigma, max_remove, max_centroid)` | Piff `Chisq` / `Centroid` (arcsec) | none |
 | `set_iterations(max_iter, min_iter, chisq_thresh)` | Piff fit loop | 30, 2, 0.1 |
 | `set_piff_shape_method(method, weight_fwhm)` | Piff's global shape method during the fit (PixelGrid / GSObject init, Piff stats); restored afterwards | `'hsm'` |
 | `FitConfig.from_piff_config(dict)` | use a hand-written Piff `psf` dict as is | — |
 
-`chromatic` is always False (chromatic fits deferred). `piff_config(filter_name)` returns the
-Piff dict; `to_yaml` / `from_yaml` round-trip the settings.
+**Chromatic model.** `FitConfig` does not set RomanOptics' `chromatic` option unless you do
+(`set_optics(..., chromatic=False)` or `True`), so Piff's default applies: chromatic, i.e.
+the PSF integrated over the bandpass with each star's SED. The simulated stars carry the
+simulation's SED (in memory, and through `sed.fits` in file-based runs). A monochromatic
+simulation (`set_chromatic(None)`) has no SEDs: fit it with `set_optics(...,
+chromatic=False)` (`run` raises otherwise). Oversampled model images (`'truth_os'`,
+`'model_os'`, `model_moments`, `plot_components`) of a chromatic model are drawn with the
+fit's SED, as Piff draws stars. `piff_config(filter_name)` returns the Piff dict; `to_yaml`
+/ `from_yaml` round-trip the settings.
 
 ### `GaussianMoments` (`psf_fomo.models`)
-Convolution kernel with parameters (Mxx, Mxy, Myy) in native pix² along world axes.
-`signed=False` is a PSD-clipped Gaussian (only broadens; starts at (0.01, 0, 0.01));
-`signed=True` is a sum of four tiny Gaussians with moments exactly M of any sign (linear in M,
-first-order accurate, starts at 0). Stars whose per-star fit stops at `max_nfev` are counted
-(`fit_summary["kernel_max_nfev"]`). Importing `psf_fomo.models` registers it with Piff;
-re-importing is safe.
+Signed convolution kernel with parameters (Mxx, Mxy, Myy) in native pix² along world axes: a
+sum of four tiny Gaussians with moments exactly M of any sign (linear in M, first-order
+accurate, starts at 0), so it can both broaden and sharpen. Stars whose per-star fit stops at
+`max_nfev` are counted (`fit_summary["kernel_max_nfev"]`). Importing `psf_fomo.models`
+registers it with Piff; re-importing is safe. Its former `signed=False` mode (a PSD-clipped
+Gaussian, kernel kind `'positive'`) was removed in favour of Piff's `GaussianBlur`; settings or
+Piff files that use it no longer load.
 
-### `GaussianBlur` (Piff PR branch `gaussian_blur`, under test)
+### `GaussianBlur` (Piff)
 Piff's Gaussian blur kernel with parameters `[ixx, iyy, ixy]` in arcsec² (world axes; note the
-order), drawn as the PSD projection of the parameters (broadens only, same profile family as
-`positive`), exact at zero blur, starts at 0. Not on our pinned Piff commit: the tests skip and
-`add_kernel("blur")` fails at `piff.PSF.process` without the branch. `init` is given in our pix²
-(Mxx, Mxy, Myy); `psf_fomo.piffval.config.blur_params` / `blur_moments` convert. Components
-report M in pix². `interp='BasisPolynomial'` uses the branch's joint solve with a χ² line
-search. The reference solver uses a 1e-3 pix² step and starts PSD-clipped kernels at 0.01 pix²
-per axis. Study notes: `docs/notes/piff_gaussianblur.md`; tests: notebook
-`notebooks/piff_gaussianblur.ipynb`.
+order), drawn as the PSD projection of the parameters (broadens only), exact at zero blur,
+starts at 0, analytic derivatives. `init` is given in our pix² (Mxx, Mxy, Myy);
+`psf_fomo.piffval.config.blur_params` / `blur_moments` convert. Components report M in pix².
+`interp='BasisPolynomial'` uses Piff's joint solve with a χ² line search. The reference solver
+uses a 1e-3 pix² step and starts it at 0.01 pix² per axis (M = 0 is the apex of the PSD cone,
+where the projection is not differentiable).
 
 ## Runs (`PiffValidation`)
 - One SCA per fit; the selected observations are pooled.
-- `set_reserve(frac, seed)`: `int(frac × N)` reserve stars (Piff's rule), not fitted but
-  refluxed and diagnosed.
+- `set_cuts(...)`: Piff's rejection cuts, the same as for real data (below).
+- `set_reserve(frac, seed)`: `int(frac × N)` reserve stars (Piff's rule) among the stars that
+  pass the cuts, not fitted but refluxed and diagnosed.
 - `set_verbose(level)`: Piff log output, 0 (errors only) … 3.
 - **Convergence**: Piff has no convergence attribute; `converged` is False when Piff logged
   "PSF fit did not converge" (it reached `max_iter`). A fit is never reported as converged
   otherwise.
+
+### Star selection cuts (`set_cuts`)
+`set_cuts(min_sep=2.5, min_snr=None, max_snr_weight=0, max_edge_frac=None,
+stamp_center_size=None, max_mask_pixels=None, max_pixel_cut=None, reject_where=None,
+nstars=None)`: Piff's own rejection step (`select` in a Piff config), with the same names
+and meanings as `StarCatalog.set_cuts` for real data (one builder,
+`psf_fomo.piffval.fitting.make_cuts`).
+
+- **Defaults** (also without a call): `min_sep` = 2.5″, i.e. a star with any other star
+  within 2.5″ is rejected (a 25-pixel stamp reaches 1.9″ at its corners, plus the PSF
+  wings; random placement has no minimum distance), and `max_snr_weight` = 0 (no S/N cap;
+  Piff's own default of 100 would down-weight every bright star). `set_cuts(None)` turns
+  every cut off.
+- Applied to **each observation separately**: a neighbour counts only in the same exposure.
+- In memory the cuts run through Piff's own code (`Select.rejectStars`); file-based runs
+  write them into `piff.yaml`. Both keep the same stars. As in Piff, stars with a `gain`
+  property (star shot noise simulated) get their Poisson variance added at this step.
+- Rejected stars are not fitted and not diagnosed. They are listed in `res.rejected`
+  (`obs`, `sca`, `star_id`, `x`, `y`, `mag`; saved as `rejected.fits`);
+  `fit_summary["n_input"]` and `["n_rejected"]` count them. Piff does not report which cut
+  rejected a star.
 
 ## Star table columns
 `obs`, `sca`, `star_id`, `x`, `y`, `phase_x`, `phase_y`, `mag`, `reserve`, `flag`
@@ -100,7 +129,7 @@ e, world axes).
 
 | comparison | reference | model |
 |---|---|---|
-| `data` | noisy data stamp | model at the fitted flux and centre, same stamp; both measured about the catalog position (as wmom needs) |
+| `data` | noisy data stamp | model at the fitted flux and centre, same stamp; both measured about the catalog position (as wmom needs; Piff's own stats measure about the fitted centre instead) |
 | `truth_native` | noiseless truth stamp (`render_stamp`) | model at the true position and flux; isolates model error from noise |
 | `truth_os` | oversampled truth (`truth_psf`, effective PSF) | model on the same fine grid: `'auto'` profiles convolved with the native pixel once, `'no_pixel'` ones (PixelGrid) as they are |
 | `model_os` (opt-in) | none (`*_ref` and residuals NaN) | the model alone on the oversampled grid, same convention as `truth_os`; needs no truth |
@@ -137,9 +166,10 @@ The real-data package `psf_fomo.datafit` uses these and `FitConfig`; nothing in 
 ## Components (`res.components()`)
 - `optics`: per Noll index, fitted extra Zernike at the stars vs catalog truth (waves): mean,
   std, `diff_mean`, `diff_std`, Piff's σ (`fit_err`), prior σ.
-- `kernel` (GaussianMoments or Piff Gaussian): per star M = (mxx, mxy, myy), T in pix², vs the
-  truth kernel (`kernel_*` catalog columns, 0 if none). A positive GaussianMoments reports the
-  PSD-clipped M it draws (`clipped`). Piff's Gaussian (σ, g) is converted to M.
+- `kernel` (GaussianMoments, Piff GaussianBlur or Piff Gaussian): per star M = (mxx, mxy, myy),
+  T in pix², vs the truth kernel (`kernel_*` catalog columns, 0 if none). GaussianBlur reports
+  the PSD projection it draws (`clipped` where it differs from the parameters). Piff's
+  Gaussian (σ, g) is converted to M.
 - `pixelgrid`: per star the grid's net flux in the unit model and its largest |value|.
 
 ## Plots
@@ -161,23 +191,23 @@ command (it imports `psf_fomo.models`).
   properties `sca`, `obs`, `star_id`.
 - Weight 1 / `BKGVAR` (the SCA's median background variance; in memory each star uses its own
   — identical for Gaussian noise). `gain` only when star shot noise is simulated.
-- `select.max_snr_weight: 0`: Piff's default (100) would down-weight every star with
-  S/N > 100; it is switched off so both modes fit the same χ². Reserve via Piff's
-  `reserve_frac` + `seed` (a different random choice than in memory).
+- `select`: the cuts of `set_cuts` (default `min_sep: 2.5`, `max_snr_weight: 0`), as in
+  memory, so both modes fit the same stars and χ². Reserve via Piff's `reserve_frac` +
+  `seed` (a different random choice than in memory).
 - Stars are matched to the catalog by `star_id`; the result is a normal `FitResult`.
 
 ## ρ statistics (`res.rho()`, `psf_fomo.piffval.rho`)
 `res.rho(algorithms=("wmom", "gauss"), wmom_fwhm=(0.4,), which="all", min_sep=0.1,
 max_sep=10, bin_size=0.5)` → table of ρ1 … ρ5 (ξ+, error, ξ−, npairs, `n_used`) per
 algorithm; `res.plot_rho(table)`. Piff's `RhoStats` with the per-star measurement replaced by
-the chosen algorithm (the global shape method is not changed; Piff's default `hsm` fails on
-native stamps). Data vs model at the fitted flux and centre, reduced shear g, T in arcsec²,
+the chosen algorithm (the global shape method is not changed). Data and model are measured
+about the fitted centre (Piff's behaviour). Data vs model at the fitted flux and centre, reduced shear g, T in arcsec²,
 separations in arcmin (one SCA ≈ 7.5′). Needs `treecorr`. τ statistics are not included.
 
 ## Reference optimum (`psf_fomo.reference`)
 The joint χ² optimum of the *same* Piff model (every image drawn by Piff's `psf.drawStar`),
 to tell optimiser limitations (Piff above the optimum of its own model) from model
-limitations (the optimum itself biased or with excess χ²). CLAUDE.md §8.
+limitations (the optimum itself biased or with excess χ²).
 
 ```python
 out = res.reference(starts=("given", "zero"), max_nfev=50)   # from a Piff fit
@@ -219,8 +249,8 @@ comparison_table({"Piff": res, "Piff, true centres": out["given"],
   parameter per Jacobian.
 
 ## Saved folder
-`psf.fits` (Piff's own file, incl. the fitted stars), `stars.fits` (the table), `moments.fits`
-(if computed), `config.yaml` (run settings incl. the Piff dict and diagnostics settings, fit
+`psf.fits` (Piff's own file, incl. the fitted stars), `stars.fits` (the table),
+`rejected.fits` (stars removed by the cuts), `moments.fits` (if computed), `config.yaml` (run settings incl. the Piff dict and diagnostics settings, fit
 summary, provenance). `load_fit(path, sim=None)` reloads; the simulation is reloaded when it
 was given as a folder, or can be passed. Piff's file has no star images, so images are re-cut
 from the simulation and the saved fits attached (`fitted_stars()`).
@@ -230,9 +260,9 @@ from the simulation and the saved fits attached (`fitted_stars()`).
   stars χ² has no noise scale, the default 0.1 is met at once, and Piff stops after `min_iter`
   and reports convergence. For such runs use `set_iterations(chisq_thresh=1e-6)` (or raise
   `min_iter`) and check `niter`.
-- Achromatic fits only.
+- One SED shared by all stars (simulations draw every star with the same SED).
 - Observations are pooled assuming they share the WCS (true for the current simulations).
 - In-memory reserve choice uses its own random generator, so it differs from Piff's
   `select.reserve_frac` for the same seed.
-- In-memory runs apply no Piff selection (no `max_snr_weight` down-weighting, no S/N or size
-  cuts); file-based runs apply Piff's selection with `max_snr_weight: 0`.
+- Piff's star finders (SizeMag etc.) are not used for simulations: every simulated star is a
+  candidate, and only the cuts remove stars.

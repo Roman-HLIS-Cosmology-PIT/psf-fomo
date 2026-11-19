@@ -1,4 +1,4 @@
-"""Reference solver: joint χ² optimum of the model Piff fits (CLAUDE.md §8).
+"""Reference solver: joint χ² optimum of the model Piff fits.
 
 - `ReferenceSolver`: the solver on a Piff PSF and its stars.
 - `reference_from_fit`: optimum of a `FitResult`'s model, compared with Piff's solution.

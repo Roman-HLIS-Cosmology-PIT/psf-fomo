@@ -24,8 +24,8 @@ from astropy.table import Table, vstack
 from ..io import provenance, read_yaml, write_yaml
 from . import noise as noise_mod
 from . import plotting, storage
-from .psf import (apply_errors, clip_to_psd, gaussian_kernel, jitter_kernel, linear_field,
-                  make_optical_model, optical_profile, random_walk_offsets, timeseries_offsets)
+from .psf import (DEFAULT_N_WAVES, SPATIAL_MODES, apply_errors, clip_to_psd, gaussian_kernel,
+                  jitter_kernel, linear_field, make_optical_model, position_profile, optical_profile, random_walk_offsets, timeseries_offsets)
 from .stars import draw_magnitudes, draw_positions, mag_to_flux, sub_pixel_phase
 from .wcs import DEFAULT_DEC, DEFAULT_RA, make_wcs, pointing_coord
 
@@ -68,8 +68,9 @@ class RomanSimulation:
 
     Defaults of the other settings: random placement with random sub-pixel phases; magnitude
     18 (AB); no extra aberrations; no dilation or shear; MTF on at scale 1; no aberration
-    scatter; no jitter; achromatic; Gaussian noise σ = 1 e⁻; simple pixel-scale WCS; Piff's
-    ``'bilinear'`` spatial interpolation of the optical PSF.
+    scatter; no jitter; chromatic PSFs with a flat SED (drawn through the bandpass); Gaussian
+    noise σ = 1 e⁻; simple pixel-scale WCS; Piff's ``'bilinear'`` spatial interpolation of the
+    optical PSF.
     """
 
     def __init__(self, scas=(1,), n_obs=1, n_stars=1, filter="H158", seed=0, stamp_size=25,
@@ -107,11 +108,12 @@ class RomanSimulation:
             "kernel": None,
             "aberration_scatter": 0.0,
             "jitter": None,
-            "chromatic": None,
+            "chromatic": {"sed": "flat", "wave_type": "nm", "flux_type": "fphotons"},
             "noise": {"kind": "gaussian", "sigma": 1.0},
             "wcs": {"kind": "simple", "ra": DEFAULT_RA, "dec": DEFAULT_DEC, "pa": None,
                     "date": None},
-            "psf_model": {"nominal_interp": "bilinear"},
+            "psf_model": {"spatial_interpolation": "fast", "nominal_interp": "bilinear",
+                          "n_waves": DEFAULT_N_WAVES},
         }
 
     def set_placement(self, kind="random", phase=None, edge_margin=None):
@@ -191,7 +193,8 @@ class RomanSimulation:
         Parameters
         ----------
         value : float
-            Dilation factor. The MTF kernel width is multiplied by it as well (CLAUDE.md §5.3).
+            Dilation factor. The MTF kernel width is multiplied by it as well
+            (docs/conventions.md).
         sigma_obs : float
             Standard deviation of a per-observation additive offset. Default 0.
         sigma_field : float
@@ -319,19 +322,29 @@ class RomanSimulation:
             raise ValueError("model must be 'random_walk', 'timeseries' or None")
 
     def set_chromatic(self, sed="flat", wave_type="nm", flux_type="fphotons"):
-        """Render chromatic PSFs with one SED shared by all stars; ``set_chromatic(None)`` = off.
+        """The stars' SED (one shared by all stars), or monochromatic PSFs.
+
+        Chromatic (the default, with a flat SED): the PSF is wavelength dependent and each
+        star is drawn through the bandpass, weighted by the SED. Monochromatic
+        (``set_chromatic(None)``): the PSF at the bandpass's effective wavelength.
 
         Parameters
         ----------
-        sed : str or None
-            ``'flat'`` (constant photons per unit wavelength) or the name of an SED file
-            readable by ``galsim.SED``. None: achromatic (PSF at the bandpass effective
-            wavelength).
+        sed : 'flat', str, galsim.SED or None
+            ``'flat'`` (default): constant photons per unit wavelength. A file name: read by
+            ``galsim.SED`` with ``wave_type`` and ``flux_type``. A ``galsim.SED`` (spectral):
+            stored in the configuration as a table sampled every 0.5 nm over the filter's
+            wavelength range (photons per nm; finer spectral features are smoothed). None:
+            monochromatic.
         wave_type, flux_type : str
-            Units of a user SED file, as for ``galsim.SED``. Ignored for ``'flat'``.
+            Units of an SED file, as for ``galsim.SED``. Ignored otherwise.
+
+        Example
+        -------
+        >>> sim.set_chromatic(galsim.SED("vega.txt", wave_type="nm", flux_type="flambda"))
         """
-        self.config["chromatic"] = None if sed is None else {
-            "sed": str(sed), "wave_type": wave_type, "flux_type": flux_type}
+        bandpass = galsim.roman.getBandpasses()[self.config["filter"]]
+        self.config["chromatic"] = storage.sed_setting(sed, bandpass, wave_type, flux_type)
 
     def set_noise(self, kind="gaussian", sigma=1.0, effects=None):
         """Set the noise model. Images are stored in ADU (divided by ``galsim.roman.gain``).
@@ -380,17 +393,47 @@ class RomanSimulation:
         self.config["wcs"] = {"kind": kind, "ra": float(ra), "dec": float(dec),
                               "pa": None if pa is None else float(pa), "date": date}
 
-    def set_psf_model(self, nominal_interp="bilinear"):
-        """Set how Piff's Roman model interpolates the optical PSF across an SCA.
+    def set_psf_model(self, spatial_interpolation="fast", nominal_interp="bilinear",
+                      n_waves="default"):
+        """Set how the optical PSF is evaluated across an SCA and across the bandpass.
 
         Parameters
         ----------
+        spatial_interpolation : {'fast', 'piff', 'exact'}
+            ``'piff'``: Piff's ``RomanOpticalModel`` exactly — Roman PSFs at the SCA corners
+            blended with position weights; chromatic PSFs drawn through the bandpass as Piff
+            draws them (slow: every star sums each corner over the filter). ``'fast'``
+            (default): the same corner blending, but each corner PSF is summed over the filter
+            once per SCA and observation (an effective PSF), so each star is cheap.
+            ``'exact'``: ``galsim.roman.getPSF`` at each star's own position (no corner
+            blending), summed over the filter per star.
         nominal_interp : {'bilinear', 'five_point'}
-            Piff ``RomanOpticalModel`` option. Default ``'bilinear'`` (four SCA corners).
+            Piff option for the corner blending (``'piff'``, ``'fast'``). Default
+            ``'bilinear'`` (four SCA corners).
+        n_waves : int, None or 'default'
+            Chromatic PSFs, ``'fast'`` and ``'exact'``: number of wavelengths (≥ 2), evenly
+            spaced from the filter's blue to red limit, at which the optical PSF is computed
+            for the sum over the filter (the PSF is taken as linear in wavelength between
+            them); more wavelengths are more accurate and slower to set up. None: one every
+            5 nm. ``'default'``: 10, for every filter.
+            Must be ``'default'`` or None for ``'piff'``, which is always exact in wavelength.
         """
+        if spatial_interpolation not in SPATIAL_MODES:
+            raise ValueError(f"spatial_interpolation must be one of {SPATIAL_MODES}")
         if nominal_interp not in ("bilinear", "five_point"):
             raise ValueError("nominal_interp must be 'bilinear' or 'five_point'")
-        self.config["psf_model"] = {"nominal_interp": nominal_interp}
+        if spatial_interpolation == "piff":
+            if n_waves not in ("default", None):
+                raise ValueError("n_waves does not apply to spatial_interpolation='piff' "
+                                 "(Piff's model is exact in wavelength)")
+            n_waves = None
+        elif n_waves == "default":
+            n_waves = DEFAULT_N_WAVES
+        if n_waves is not None and int(n_waves) < 2:
+            raise ValueError("n_waves must be at least 2 (or None)")
+        self.config["psf_model"] = {"spatial_interpolation": spatial_interpolation,
+                                    "nominal_interp": nominal_interp,
+                                    "n_waves": None if n_waves is None else int(n_waves)}
 
     def to_yaml(self, path):
         """Write the configuration to a YAML file."""
@@ -613,7 +656,11 @@ class Simulation:
         path.mkdir(parents=True, exist_ok=True)
         config = copy.deepcopy(self.config)
         chromatic = config["chromatic"]
-        if chromatic is not None and chromatic["sed"] != "flat":
+        if chromatic is not None and chromatic["sed"] in ("flat", "table"):
+            # Written for Piff's file input (sed_file_name); the config keeps its own copy.
+            wave, flux = storage.sample_sed(self.truth.sed, self.truth.bandpass)
+            storage.write_sed(path / storage.SED_FILE, wave, flux)
+        elif chromatic is not None:
             sed_file = Path(chromatic["sed"])
             if sed_file.resolve() != (path / sed_file.name).resolve():
                 shutil.copy(sed_file, path / sed_file.name)
@@ -683,7 +730,7 @@ def load_simulation(path):
     saved = read_yaml(path / "config.yaml")
     config = saved["config"]
     chromatic = config["chromatic"]
-    if chromatic is not None and chromatic["sed"] != "flat":
+    if chromatic is not None and chromatic["sed"] not in ("flat", "table"):
         chromatic["sed"] = str(path / chromatic["sed"])
     scas = config["scas"]
     images, noiseless, catalogs = {}, {}, []
@@ -713,9 +760,17 @@ class _Truth:
         # A Zernike field needs Piff's 'linear' aberration mode; otherwise one vector per SCA.
         self.linear = bool(np.any(self.z_sigma_field > 0))
         self.sed = _make_sed(config["chromatic"], self.bandpass)
+        psf_model = config["psf_model"]
+        # Configurations saved before these settings existed used Piff's model.
+        self.spatial = psf_model.get("spatial_interpolation", "piff")
+        self.n_waves = None if self.spatial == "piff" else psf_model.get("n_waves")
+        # Effective-PSF grids twice the render patch: light beyond them never reaches a patch.
+        self.extent = 2 * config["render_size"] * galsim.roman.pixel_scale
         self.model = make_optical_model(config["filter"], self.bandpass, config["max_zernike"],
-                                        self.linear, config["psf_model"]["nominal_interp"],
-                                        chromatic=self.sed is not None)
+                                        self.linear, psf_model["nominal_interp"],
+                                        chromatic=self.sed is not None,
+                                        sed=self.sed if self.spatial == "fast" else None,
+                                        n_waves=self.n_waves, extent=self.extent)
         self._obs = {}
         self._sca = {}
         self._background = {}
@@ -862,8 +917,15 @@ class _Truth:
         table, params = self.sca_truth(obs, sca)
         row = table[i]
         x, y = float(row["x"]), float(row["y"])
-        optical = optical_profile(self.model, params[i], x, y, sca, self.wcs[sca],
-                                  self.pointing)
+        if self.spatial == "exact":
+            # The catalog's aberrations at the star (incl. any field and per-star scatter).
+            zernikes = [float(row[f"z{k + 4}"]) for k in range(self.nz)]
+            optical = position_profile(sca, self.config["filter"], self.bandpass, x, y,
+                                       self.wcs[sca], zernikes, sed=self.sed,
+                                       n_waves=self.n_waves, extent=self.extent)
+        else:
+            optical = optical_profile(self.model, params[i], x, y, sca, self.wcs[sca],
+                                      self.pointing)
         dilation = float(row["dilation"])
         mtf_width = dilation * float(row["mtf_scale"]) if self.config["mtf"] else None
         kernel = None
@@ -877,12 +939,19 @@ class _Truth:
                             mtf_width=mtf_width)
 
     def draw(self, prof, flux, image, center, method):
-        """Draw a unit-flux truth profile with the given flux (e⁻) onto an image."""
-        if self.sed is None:
-            prof.withFlux(flux).drawImage(image=image, method=method, center=center)
+        """Draw a unit-flux truth profile with the given flux (e⁻) onto an image.
+
+        A chromatic profile (``'piff'`` mode) is drawn as Piff's RomanOptics draws its model:
+        × flux × the effective SED (SED × bandpass, unit flux), through the flat bandpass.
+        Effective (``'fast'``, ``'exact'``) and monochromatic profiles are achromatic; their
+        flux is scaled, not reset, so light outside an effective-PSF grid stays dropped.
+        """
+        if isinstance(prof, galsim.ChromaticObject):
+            sed_eff = self.sed * self.bandpass
+            (prof * flux * sed_eff).drawImage(self.model.flat_bandpass, image=image,
+                                              method=method, center=center)
         else:
-            sed = self.sed.withFlux(flux, self.bandpass)
-            (prof * sed).drawImage(self.bandpass, image=image, method=method, center=center)
+            prof.withScaledFlux(flux).drawImage(image=image, method=method, center=center)
 
     def render_patch(self, obs, sca, i):
         """Noiseless ``render_size`` patch of star i in e⁻, in SCA image coordinates."""
@@ -931,12 +1000,7 @@ def _make_sed(chromatic, bandpass):
     """The SED shared by all stars, normalised to unit flux in the bandpass (or None)."""
     if chromatic is None:
         return None
-    if chromatic["sed"] == "flat":
-        sed = galsim.SED("1", wave_type="nm", flux_type="fphotons")
-    else:
-        sed = galsim.SED(chromatic["sed"], wave_type=chromatic["wave_type"],
-                         flux_type=chromatic["flux_type"])
-    return sed.withFlux(1.0, bandpass)
+    return storage.sed_from_setting(chromatic).withFlux(1.0, bandpass)
 
 
 def _stamp_bounds(pos, size):

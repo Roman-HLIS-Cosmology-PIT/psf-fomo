@@ -9,6 +9,7 @@ import pytest
 
 from psf_fomo.models import GaussianMoments  # noqa: F401  (registered)
 from psf_fomo.piffval import FitConfig, FitResult, PiffValidation, diagnostics
+from psf_fomo.piffval.config import blur_params
 from psf_fomo.piffval.run import make_logger
 from psf_fomo.reference import ReferenceSolver, comparison_table
 from psf_fomo.reference.solver import basis_matrix
@@ -34,21 +35,27 @@ def fit(config, stars):
     return psf
 
 
-def kernel_config(signed=False, **iterations):
+def kernel_config(signed=False, init=None, **iterations):
+    """Convolve[fixed base, kernel]: Piff's GaussianBlur (exact in family for a Gaussian
+    truth kernel) or, with ``signed``, our GaussianMoments."""
+    if signed:
+        model = {"type": "GaussianMoments"}
+    else:
+        model = {"type": "GaussianBlur"}
+        if init is not None:
+            model["init"] = blur_params(*init)
     return {"type": "Convolve", **iterations, "components": [
         FIXED_BASE,
-        {"type": "Simple", "model": {"type": "GaussianMoments", "signed": signed},
-         "interp": {"type": "Polynomial", "order": 0}}]}
+        {"type": "Simple", "model": model, "interp": {"type": "Polynomial", "order": 0}}]}
 
 
 def test_reference_finishes_an_early_stopped_fit(synthetic_stars):
-    # Noiseless stars with Piff's default chisq_thresh: Piff stops after min_iter with the
-    # kernel ~2.5e-3 pix² off (CLAUDE.md §9.4a). The joint optimum of the same model is the
-    # truth, from Piff's solution and from zero.
+    # Piff stopped after one iteration from a kernel 5× too large. The joint optimum of the
+    # same model is the truth, from Piff's solution and from zero.
     stars, rows = synthetic_stars(kernel_truth(), n=6)
     for key, value in zip(("mxx", "mxy", "myy"), KERNEL_M):
         rows[f"kernel_{key}"] = value  # truth columns, as a simulation catalog has them
-    psf = fit(kernel_config(), stars)
+    psf = fit(kernel_config(init=(0.2, 0.0, 0.1), max_iter=1, min_iter=1), stars)
     solver = ReferenceSolver(psf, psf.stars, rows)
     out = solver.solve(starts=("given", "zero"), max_nfev=60)
     # Piff's early-stopped solution is measurably off; the reference must improve on it.
@@ -143,7 +150,7 @@ def test_basis_spans_piff_interpolation(synthetic_stars):
     config = {"type": "Sum", "max_iter": 3, "components": [
         {"type": "Convolve", "components": [
             FIXED_BASE,
-            {"type": "Simple", "model": {"type": "GaussianMoments", "signed": True},
+            {"type": "Simple", "model": {"type": "GaussianMoments"},
              "interp": {"type": "Polynomial", "order": 1}}]},
         {"type": "Simple", "model": {"type": "PixelGrid", "size": 5, "scale": 0.11},
          "interp": {"type": "BasisPolynomial", "order": 1}}]}
@@ -194,7 +201,7 @@ def test_reference_from_config_in_family_kernel():
     s.add_kernel(*KERNEL_M)
     cfg = FitConfig()
     cfg.set_optics("pinned")
-    cfg.add_kernel("positive", order=0)
+    cfg.add_kernel("blur", order=0)
     pv = PiffValidation(s.run(), cfg)
     from psf_fomo.reference import reference_from_config
     out = reference_from_config(pv, starts=("zero",), max_nfev=40)

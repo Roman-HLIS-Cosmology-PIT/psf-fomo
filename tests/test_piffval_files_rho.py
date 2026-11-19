@@ -30,7 +30,9 @@ def test_file_config_simple_wcs():
     assert inp["chipnum"] == 3 and inp["properties"] == {"sca": 3, "obs": 0}
     assert inp["property_cols"] == ["star_id"] and inp["noise"] == "BKGVAR"
     assert "gain" not in inp                  # Gaussian noise: no star shot noise
-    assert config["select"] == {"max_snr_weight": 0.0, "reserve_frac": 0.25, "seed": 9}
+    # Default cuts (min_sep 2.5″, no S/N cap), as in memory.
+    assert config["select"] == {"min_sep": 2.5, "max_snr_weight": 0.0, "reserve_frac": 0.25,
+                                "seed": 9}
     assert config["modules"] == ["psf_fomo.models"] and config["shape_method"] == "hsm"
     assert config["psf"]["components"][0]["filter_name"] == "H158"
 
@@ -87,6 +89,20 @@ def test_moment_rho_stats_uses_its_algorithm(gaussian_fit):
         MomentRhoStats("ksb")
 
 
+def test_moment_rho_stats_passes_piff_keywords(gaussian_fit):
+    # Our measureShapes override must forward include_flagged and logger by name (Piff added
+    # include_flagged before logger): flagged stars are dropped unless requested.
+    pytest.importorskip("ngmix")
+    psf = gaussian_fit
+    stars = list(psf.stars[:5])
+    stars[0] = stars[0].flag_if(True)
+    stats = MomentRhoStats("wmom", 0.4)
+    positions, data, model = stats.measureShapes(psf, stars, logger=make_logger(0)[0])
+    assert len(positions) == len(data) == len(model) == 4 and stats.n_used == 4
+    positions, _, _ = stats.measureShapes(psf, stars, include_flagged=True)
+    assert len(positions) == 5
+
+
 def small_simulation(wcs="simple"):
     sim = RomanSimulation(scas=[1, 5], n_stars=12, seed=21)
     sim.set_brightness(mag_range=(19.5, 20.5))
@@ -106,9 +122,15 @@ def test_files_mode_matches_memory(tmp_path, wcs):
     pv = PiffValidation(tmp_path / "sim", cfg, sca=5, obs=0)
     files = pv.run(save_to=tmp_path / "fit", mode="files")
     assert (tmp_path / "fit" / "piff.yaml").exists()
-    assert len(files.table) == len(mem.table) == 12
+    # Chromatic by default on both sides: Piff reads the SED saved with the simulation.
+    assert (tmp_path / "sim" / "sed.fits").exists()
+    assert files.config["piff_psf"]["components"][0].get("chromatic", True)
+    # Both modes apply the same cuts: the same stars are kept and rejected.
+    assert len(files.table) == len(mem.table) == 12 - mem.fit_summary["n_rejected"]
     np.testing.assert_array_equal(np.sort(files.table["star_id"]),
                                   np.sort(mem.table["star_id"]))
+    np.testing.assert_array_equal(np.sort(files.rejected["star_id"]),
+                                  np.sort(mem.rejected["star_id"]))
     # Same data, weights (Gaussian noise: BKGVAR = per-star variance) and model.
     assert abs(files.fit_summary["chisq_dof"] - mem.fit_summary["chisq_dof"]) < 0.01
     f = files.table[np.argsort(files.table["star_id"])]

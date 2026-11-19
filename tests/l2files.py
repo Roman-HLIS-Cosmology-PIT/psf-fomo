@@ -1,15 +1,15 @@
-"""Test helper: write images in the FITS layout of the user's ASDF → FITS L2 converter.
+"""Test helper: small fields of stars and galaxies written in the L2 layout.
 
-Mirrors the documented layout (see ``docs/datafit.md``): PRIMARY with DETECTOR / FILTER /
-EXPTIME; SCI, DQ, ERR, MASK, IVAR, VAR_POISSON, VAR_RNOISE, GAIN, DUMO, SCI_UNIF and, with
-``uniform``, MASK_UNIF, IVAR_UNIF, GAIN_UNIF; SKYBKG in every header; the WCS in the image
-headers. Units DN/s; GAIN in electrons per DN/s.
+The file writers are the package's (`psf_fomo.datafit.synthetic`); this module adds the
+analytic test scenes (Gaussian PSF, sheared exponential galaxies) and opens test files, which
+are written in GalSim's frame.
 """
 import numpy as np
 import galsim
 import galsim.roman
-from astropy.io import fits
 
+from psf_fomo.datafit.synthetic import to_science_frame, write_l2_file  # noqa: F401
+from psf_fomo.datafit.synthetic import write_sep_catalog as sep_catalog
 from psf_fomo.sim.wcs import DEFAULT_DEC, DEFAULT_RA
 
 
@@ -17,17 +17,6 @@ def open_l2(path, **kwargs):
     """`L2Image` of a test file: these are written in GalSim's frame (``frame='galsim'``)."""
     from psf_fomo.datafit import L2Image
     return L2Image(path, frame="galsim", **kwargs)
-
-
-def to_science_frame(src, dst):
-    """Write a GalSim-frame test file as Roman's science frame (the per-SCA flip).
-
-    The flip is its own inverse, so flipping a GalSim-frame file with
-    `L2Image.write_fit_copy` gives the science-frame file; that function is tested separately
-    against sky positions.
-    """
-    from psf_fomo.datafit import L2Image
-    return L2Image(src, frame="science").write_fit_copy(dst)
 
 
 def roman_wcs(sca=5, pa_deg=0.0):
@@ -115,26 +104,6 @@ def field(n_stars=60, n_gals=60, shape=(700, 700), margin=25, min_dist=30.0, see
     return objects
 
 
-def sep_catalog(path, objects, abzp=26.0, sky=2.0, flux_scale=0.95, unclean=()):
-    """A detection catalog shaped like the user's SEP output (0-based x, y; HDU 1).
-
-    Columns ``id``, ``x``, ``y`` (0-based), ``flux_auto`` (true flux × ``flux_scale``, DN/s),
-    ``snr_auto_bkg``, ``r50`` [pix], ``clean`` (False for ids in ``unclean``), and
-    ``is_star`` (1/0, a stand-in for an external star flag); header ``ABZP``, ``SKY``.
-    """
-    from astropy.table import Table
-    t = Table({"id": [o["id"] for o in objects],
-               "x": [o["x"] - 1 for o in objects], "y": [o["y"] - 1 for o in objects],
-               "flux_auto": [o["flux"] * flux_scale for o in objects],
-               "snr_auto_bkg": [o["flux"] / 2.0 for o in objects],
-               "r50": [o["r50"] for o in objects],
-               "clean": [o["id"] not in set(unclean) for o in objects],
-               "is_star": [int(o["is_star"]) for o in objects]})
-    t.meta.update({"ABZP": abzp, "SKY": sky})
-    t.write(path, overwrite=True)
-    return path
-
-
 def write_field(folder, objects, shape=(700, 700), sca=5, sky=2.0, read_var=0.01, gain=250.0,
                 unclean=(), seed=1, primary=None):
     """Draw ``objects`` (from `field`), write the L2 file and the SEP-style catalog.
@@ -151,66 +120,3 @@ def write_field(folder, objects, shape=(700, 700), sca=5, sky=2.0, read_var=0.01
                           gain=gain, primary=primary)
     catalog = sep_catalog(folder / "det.fits", objects, sky=sky, unclean=unclean)
     return image, catalog
-
-
-def write_l2_file(path, sci, wcs, sca=5, filter_name="F158", sky=2.0, read_var=0.01,
-                  gain=250.0, mask=None, dumo=None, uniform=True, background_weights=True,
-                  primary=None, planes="all"):
-    """Write ``sci`` (DN/s, sky included) in the converter's layout.
-
-    Parameters
-    ----------
-    planes : {'all', 'unif'}
-        ``'all'``: every plane of the layout. ``'unif'``: only SCI_UNIF, MASK_UNIF,
-        IVAR_UNIF, GAIN_UNIF (what a ``variant='unif'`` fit reads; for full-SCA tests).
-    background_weights : bool
-        IVAR = 1/(VAR_RNOISE + SKYBKG/GAIN) (converter's ``--background-weights``) if True,
-        else 1/ERR² (contains the stars' Poisson noise).
-    uniform : bool
-        Write MASK_UNIF, IVAR_UNIF, GAIN_UNIF (converter's ``--uniform``).
-    primary : dict, optional
-        PRIMARY header cards replacing the defaults (DETECTOR, FILTER, EXPTIME); a value None
-        removes the card.
-    """
-    sci = np.asarray(sci, dtype=np.float32)
-    mask = np.zeros(sci.shape, np.uint8) if mask is None else mask.astype(np.uint8)
-    dumo = np.zeros_like(sci) if dumo is None else dumo.astype(np.float32)
-    gain_map = np.full(sci.shape, gain, np.float32)
-    var_rnoise = np.full(sci.shape, read_var, np.float32)
-    var_poisson = (np.clip(sci, 0, None) / gain).astype(np.float32)
-    err = np.sqrt(var_rnoise + var_poisson)
-    ivar = (1 / (var_rnoise + sky / gain_map) if background_weights else 1 / err**2)
-
-    header = galsim.FitsHeader()
-    ny, nx = sci.shape
-    wcs.writeToFitsHeader(header, galsim.BoundsI(1, nx, 1, ny))
-    wcs_cards = header.header
-
-    cards = {"DETECTOR": f"WFI{sca:02d}", "FILTER": filter_name, "EXPTIME": 139.8}
-    cards.update(primary or {})
-    hdus = [fits.PrimaryHDU()]
-    for key, value in cards.items():
-        if value is not None:
-            hdus[0].header[key] = value
-
-    def image_hdu(name, data, with_wcs=False):
-        h = fits.ImageHDU(np.asarray(data), name=name)
-        if with_wcs:
-            h.header.extend(wcs_cards, unique=True)
-        return h
-
-    if planes == "all":
-        hdus += [image_hdu("SCI", sci, True), image_hdu("DQ", mask.astype(np.int32)),
-                 image_hdu("ERR", err), image_hdu("MASK", mask),
-                 image_hdu("IVAR", ivar.astype(np.float32)),
-                 image_hdu("VAR_POISSON", var_poisson), image_hdu("VAR_RNOISE", var_rnoise),
-                 image_hdu("GAIN", gain_map), image_hdu("DUMO", dumo)]
-    hdus += [image_hdu("SCI_UNIF", sci + dumo, True)]
-    if uniform or planes == "unif":
-        hdus += [image_hdu("MASK_UNIF", mask),
-                 image_hdu("IVAR_UNIF", (1 / (var_rnoise + sky / gain_map)).astype(np.float32)),
-                 image_hdu("GAIN_UNIF", gain_map)]
-    for h in hdus:
-        h.header["SKYBKG"] = sky
-    fits.HDUList(hdus).writeto(path, overwrite=True)
-    return path

@@ -1,9 +1,9 @@
 """NaN pixels in L2 images and stars Piff cannot fit.
 
-Real L2 files have NaN in masked pixels (first real file: 1036, all masked). Piff zero-weights
-masked pixels but multiplies weight × image in its sums, so one NaN in a stamp made that star's
-flux and centre NaN and Piff excluded it, leaving χ² and dof unset. The fit's working copy now
-cleans such pixels, and the diagnostics accept stars without a χ².
+L2 files can have NaN in masked pixels. Piff zero-weights masked pixels but multiplies
+weight × image in its sums, so one NaN in a stamp would make that star's flux and centre NaN
+and Piff would exclude it, leaving χ² and dof unset. The fit's working copy cleans such
+pixels, and the diagnostics accept stars without a χ².
 """
 import hashlib
 

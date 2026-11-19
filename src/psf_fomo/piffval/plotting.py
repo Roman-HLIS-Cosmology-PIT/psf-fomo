@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from .components import component_image, kind_of, leaf_psfs
-from .residuals import draw_model_oversampled
+from .residuals import draw_model_oversampled, fit_sed
 
 QUANTITIES = ("dT_T", "de1", "de2")
 LABELS = {"dT_T": "dT/T", "de1": "de1", "de2": "de2"}
@@ -202,7 +202,8 @@ def plot_components(result, kind="pixelgrid", n_grid=3, oversample=5, size=9):
     pos = np.linspace(500, 3588, n_grid)
     fig, axes = plt.subplots(n_grid, n_grid, figsize=(2.6 * n_grid, 2.6 * n_grid),
                              squeeze=False)
-    images = [[component_image(result.psf, leaf, x, y, sca, oversample, size).array
+    sed_eff = fit_sed(result.psf, getattr(result, "_stars", None) or [])  # chromatic optics
+    images = [[component_image(result.psf, leaf, x, y, sca, oversample, size, sed_eff).array
                for x in pos] for y in pos]
     lim = max(np.abs(im).max() for row in images for im in row)
     signed = min(im.min() for row in images for im in row) < 0

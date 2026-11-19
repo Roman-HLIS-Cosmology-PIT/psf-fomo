@@ -36,10 +36,10 @@ sim.to_yaml("run01.yaml"); RomanSimulation.from_yaml("run01.yaml").run()
 | `add_kernel(mxx, mxy, myy, sigma_obs, sigma_field)` / `add_kernel(None)` | Gaussian convolution kernel with second moments M, native pix², world axes, PSD only | off |
 | `add_aberration_scatter(sigma)` | per-star Zernike scatter, waves | 0 |
 | `add_jitter('random_walk', rms_mas, n_steps)` / `add_jitter('timeseries', t, dx_mas, dy_mas)` | pointing jitter | off |
-| `set_chromatic('flat' \| sed_file, wave_type, flux_type)` | one SED for all stars | achromatic |
+| `set_chromatic('flat' \| sed_file \| galsim.SED \| None, wave_type, flux_type)` | one SED for all stars; `None` = monochromatic | chromatic, flat SED |
 | `set_noise('gaussian', sigma)` / `set_noise('roman', effects)` | noise model | Gaussian, 1 e⁻ |
 | `set_wcs('simple' \| 'roman', ra, dec, pa, date)` | WCS | 0.11″ pixel scale |
-| `set_psf_model(nominal_interp)` | Piff optical-model interpolation | `'bilinear'` |
+| `set_psf_model(spatial_interpolation, nominal_interp, n_waves)` | how the optical PSF is evaluated across the SCA and summed over the filter (below) | `'fast'`, `'bilinear'`, 10 |
 
 ### Variations of the errors
 Every error (Zernikes, dilation, shear, MTF scale, kernel moments) can vary:
@@ -49,11 +49,46 @@ Every error (Zernikes, dilation, shear, MTF scale, kernel moments) can vary:
   `aberration_interp='linear'` form.
 
 ### Truth rendering chain
-optical PSF from Piff's `RomanOpticalModel.getProfile` with the truth Zernikes (galsim.roman
-PSFs at the SCA corners, interpolated across the SCA; `pupil_bin` = Piff's default 4) →
-dilate → shear → Gaussian kernel → jitter → MTF (three Gaussians, widths × dilation ×
-mtf_scale, defined in pixels) → × flux → `drawImage(method='auto')` (pixel response applied
-once) → noise.
+optical PSF (below) → dilate → shear → Gaussian kernel → jitter → MTF (three Gaussians, widths
+× dilation × mtf_scale, defined in pixels) → × flux → `drawImage(method='auto')` (pixel
+response applied once) → noise.
+
+### Optical PSF: `set_psf_model`
+`spatial_interpolation` chooses how the optical PSF of a star is obtained:
+
+| mode | optical PSF of a star | cost |
+|---|---|---|
+| `'fast'` (default) | Piff's `RomanOpticalModel`: galsim.roman PSFs at the SCA corners, blended with position weights (`nominal_interp`; `pupil_bin` = Piff's 4). Each chromatic corner PSF is summed over the filter (weighted by bandpass × SED) once per SCA and observation, into an achromatic effective PSF; stars blend the effective PSFs. | setup once per SCA and observation, then cheap per star |
+| `'piff'` | the same corner blending, drawn exactly as Piff draws its chromatic model (corner PSFs × SED through the bandpass, GalSim's defaults) | every star sums each corner over the filter: slow |
+| `'exact'` | `galsim.roman.getPSF` at the star's own position (GalSim interpolates its design aberrations to the star), with the catalog's aberrations at the star, summed over the filter per star | per star |
+
+`'fast'` and `'piff'` describe the same PSF (Piff's spatial model), so a fit with Piff's
+`RomanOptics` uses the truth's own spatial approximation. `'exact'` does not use the corner
+blending. Monochromatic simulations: `'fast'` and `'piff'` are identical.
+
+**Sum over the filter** (`'fast'`, `'exact'`): the optical PSF is computed at `n_waves`
+wavelengths evenly spaced from the filter's blue to red limit (default 10, every filter)
+and taken as linear in wavelength between them, so the integral is a weighted
+sum of these PSFs, drawn directly on a fine grid (a quarter of the Nyquist scale at the blue
+limit, 2 × `render_size` wide). More wavelengths are more accurate and slower to set up;
+`n_waves=None` uses one every 5 nm. `'piff'` is always exact in wavelength.
+
+### Chromatic PSFs
+By default the optical PSF is wavelength dependent and each star is drawn through the
+bandpass, weighted by its SED (Piff's `RomanOptics` with `chromatic=True`). One SED is shared
+by all stars:
+- `set_chromatic("flat")` (default): constant photons per unit wavelength;
+- `set_chromatic("my_sed.dat", wave_type="nm", flux_type="flambda")`: an SED file (copied
+  into the folder when the simulation is saved);
+- `set_chromatic(galsim.SED(...))`: a spectral `galsim.SED`, stored in the configuration as
+  a table sampled every 0.5 nm over the filter's wavelength range (photons per nm; finer
+  features are smoothed);
+- `set_chromatic(None)`: monochromatic, the PSF at the filter's effective wavelength
+  (faster).
+
+`stars()` gives each Piff star its effective SED (SED × bandpass), as Piff's chromatic
+model needs. A saved chromatic simulation includes `sed.fits` (or the copied SED file) for
+Piff's file input.
 
 ### Gaussian kernel
 `add_kernel(mxx, mxy, myy)` convolves the PSF with an elliptical Gaussian whose second-moment
@@ -100,7 +135,9 @@ Saved folder:
 - `catalog_NNN.fits`: HDU `STARS` = all stars; with the simple WCS also one HDU per SCA
   (Piff's file input does not split a catalog by chip; with the Roman WCS Piff can use
   `ra`/`dec` instead).
-- `config.yaml`: configuration + provenance; a user SED file is copied next to it.
+- `config.yaml`: configuration + provenance.
+- chromatic simulations: `sed.fits` (`WAVE` nm, `FLUX` photons per nm; flat or
+  `galsim.SED` input), or a copy of the user's SED file. Piff's file input reads it.
 
 Access:
 - `stars(sca, obs)`: Piff `Star`s (stamp_size stamps, weight = 1/`bkg_var`, properties
@@ -116,9 +153,11 @@ change the draws of the others.
 
 ## Limitations
 - Each star is drawn on a `render_size` patch; flux beyond it (≈1–3 % for 64 px) is not drawn.
-- With per-star aberration scatter each star needs its own optical PSF (4 `getPSF` calls):
-  slow for many stars. Chromatic PSFs are much slower than achromatic ones.
-- With a Zernike field, the catalog `z` values are the field evaluated at the star; the image
-  uses Piff's interpolation of corner PSFs evaluated at the corner values.
+- With per-star aberration scatter each star needs its own optical PSF (4 `getPSF` calls
+  and, when chromatic, 4 sums over the filter with `'fast'`): slow for many stars.
+  `'exact'` and `'piff'` are slow per star in any case.
+- With a Zernike field, the catalog `z` values are the field evaluated at the star; with
+  `'fast'` and `'piff'` the image uses Piff's interpolation of corner PSFs evaluated at the
+  corner values (with `'exact'`, the values at the star).
 - Weights use the expected background variance at the star centre, constant over the stamp.
 - Only one SED shared by all stars.

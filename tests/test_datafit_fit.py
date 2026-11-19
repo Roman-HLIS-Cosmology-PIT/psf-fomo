@@ -1,4 +1,4 @@
-"""StarCatalog and DataFit on files in the user's L2 layout (closed loop, no real data).
+"""StarCatalog and DataFit on files in the L2 layout (closed loop, no real data).
 
 A fast analytic model (Piff Gaussian, Mean interpolation) is fitted to images drawn with the
 same Gaussian PSF, so the model is exact and χ²/dof ≈ 1 tests the noise model.
@@ -78,8 +78,9 @@ def test_piff_table_and_select(stars_only):
     img.set_weights("ivar")
     assert "gain" not in cat.piff_table(img).colnames
 
-    # Piff's own max_snr_weight default unless set
-    assert cat.piff_select() == {"type": "SizeMag", "reject_where": "clean == 0"}
+    # Defaults: clean only, min_sep 2.5″; Piff's own max_snr_weight default unless set
+    assert cat.piff_select() == {"type": "SizeMag", "reject_where": "clean == 0",
+                                 "min_sep": 2.5}
     cat.select_stars("sizemag", impurity=0.02)
     cat.set_cuts(clean_only=True, min_snr=20, min_sep=1.5, reject_where="r50 > 5")
     sel = cat.piff_select()
@@ -270,6 +271,25 @@ def test_piff_yaml_reproduces_with_piff(basic_fit):
     psf = piff.config.process(config, logger=make_logger(0)[0])
     assert len(psf.stars) == len(res.table)
     np.testing.assert_allclose(psf.chisq, res.fit_summary["chisq"], rtol=1e-6)
+
+
+def test_run_without_saving_keeps_nothing(stars_only, tmp_path, monkeypatch):
+    # Piff's inputs go to a temporary folder; the result works in memory.
+    image, catalog, _ = stars_only
+    work = tmp_path / "cwd"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    cat = StarCatalog(catalog)
+    cat.select_stars("all")
+    cat.set_cuts(clean_only=False, max_snr_weight=0)
+    fit = DataFit(open_l2(image), cat, gaussian_config())
+    fit.set_diagnostics(native=("gauss",), oversampled=())
+    res = fit.run()
+    assert list(work.iterdir()) == []
+    assert len(res.table) > 0 and res.fit_summary["converged"]
+    assert res.moments is not None and len(res.moments) > 0
+    stars, _ = res.fitted_stars()
+    assert len(stars) == len(res.table)
 
 
 def test_sizemag_picks_the_stars(stars_and_galaxies, tmp_path):

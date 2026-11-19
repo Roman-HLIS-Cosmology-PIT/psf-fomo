@@ -1,8 +1,8 @@
-"""Piff's GaussianBlur (PR branch ``gaussian_blur``) as our kernel kind ``'blur'``.
+"""Piff's GaussianBlur as our kernel kind ``'blur'``.
 
-Checks our assumptions about the PR (units, parameter order, PSD projection) against our
-positive GaussianMoments, and the package glue: FitConfig, components, reference solver.
-Skipped when the installed Piff has no GaussianBlur.
+Checks our assumptions about it (units, parameter order, PSD projection) against the
+simulation's Gaussian kernel (`psf_fomo.sim.psf.gaussian_kernel` of the PSD-clipped M), and
+the package glue: FitConfig, components, reference solver.
 """
 import copy
 
@@ -12,16 +12,13 @@ import galsim.roman
 import piff
 import pytest
 
-from psf_fomo.models import GaussianMoments
 from psf_fomo.piffval import FitConfig
 from psf_fomo.piffval.components import component_image, kernel_moments, kind_of, leaf_psfs
 from psf_fomo.piffval.config import blur_moments, blur_params
 from psf_fomo.piffval.run import make_logger
 from psf_fomo.reference import ReferenceSolver
 from psf_fomo.reference.solver import BLUR_STEP
-
-pytestmark = pytest.mark.skipif(not hasattr(piff, "GaussianBlur"),
-                                reason="Piff without GaussianBlur (needs the gaussian_blur branch)")
+from psf_fomo.sim.psf import clip_to_psd, gaussian_kernel
 
 PIX = galsim.roman.pixel_scale
 KERNEL_M = (0.04, 0.01, 0.02)   # pix², inside the PSD cone
@@ -43,9 +40,9 @@ def test_param_conversion_order_and_units():
 
 @pytest.mark.parametrize("m", [KERNEL_M, (0.0, 0.0, 0.0), (0.03, 0.0, 0.0),
                                (0.01, 0.02, 0.01)])  # last one is non-PSD: both clip it
-def test_blur_draws_like_positive_gaussian_moments(m):
+def test_blur_draws_like_clipped_gaussian_kernel(m):
     blur = piff.GaussianBlur().getProfile(np.array(blur_params(*m)))
-    ours = GaussianMoments().getProfile(m)
+    ours = gaussian_kernel(*clip_to_psd(*m))
     a, b = draw(galsim.Convolve(BASE, blur)), draw(galsim.Convolve(BASE, ours))
     np.testing.assert_allclose(a, b, atol=2e-5 * b.max())
 
@@ -88,7 +85,7 @@ def kernel_psf(interp="Polynomial", **iterations):
 
 
 def truth_profile(m=KERNEL_M):
-    return galsim.Convolve(BASE, GaussianMoments().getProfile(m))
+    return galsim.Convolve(BASE, gaussian_kernel(*m))
 
 
 def test_kernel_moments_projection_and_clip_flag():

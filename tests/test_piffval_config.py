@@ -21,7 +21,7 @@ def test_default_is_optics_with_mtf():
     psf = FitConfig().piff_config("H158")
     assert types(psf) == ["Convolve", ["RomanOptics", "GaussianMixture"]]
     optics = psf["components"][0]
-    assert optics["chromatic"] is False and optics["filter_name"] == "H158"
+    assert "chromatic" not in optics and optics["filter_name"] == "H158"   # Piff's default
     assert optics["max_zernike"] == 22 and optics["aberration_prior_sigma"] == 0.05
     assert (psf["max_iter"], psf["min_iter"], psf["chisq_thresh"]) == (30, 2, 0.1)
 
@@ -35,7 +35,7 @@ def test_full_structure_and_order():
     assert types(psf) == ["Sum", [["Convolve", ["RomanOptics", "GaussianMoments",
                                                "GaussianMixture"]], "PixelGrid"]]
     kernel = psf["components"][0]["components"][1]
-    assert kernel["model"]["signed"] is True
+    assert "signed" not in kernel["model"]   # GaussianMoments is always signed
     assert kernel["interp"] == {"type": "Polynomial", "order": 1}
     assert psf["components"][1]["interp"] == {"type": "BasisPolynomial", "order": 2}
     assert psf["outliers"] == [{"type": "Chisq", "nsigma": 4.0, "max_remove": 0.05},
@@ -74,8 +74,19 @@ def test_invalid_settings():
         cfg.set_optics("fixed")
     with pytest.raises(ValueError):
         cfg.add_kernel("moffat")
+    with pytest.raises(ValueError, match="'blur'"):
+        cfg.add_kernel("positive")   # replaced by Piff's GaussianBlur
     with pytest.raises(ValueError):
         cfg.add_pixelgrid(size=0)
+
+
+def test_saved_positive_kernel_is_rejected():
+    cfg = FitConfig()
+    cfg.add_kernel("signed")
+    cfg.config["kernel"]["kind"] = "positive"   # as in settings saved before the removal
+    old = FitConfig.from_config(cfg.config)
+    with pytest.raises(ValueError, match="not available"):
+        old.piff_config("H158")
     with pytest.raises(ValueError):
         cfg.set_piff_shape_method("wmom")  # needs weight_fwhm
 
@@ -83,7 +94,7 @@ def test_invalid_settings():
 def test_yaml_round_trip(tmp_path):
     cfg = FitConfig()
     cfg.set_optics("free", max_zernike=11, prior_sigma=0.02, aberration_interp="linear")
-    cfg.add_kernel("positive", order=0, init=(0.02, 0.0, 0.02))
+    cfg.add_kernel("blur", order=0, init=(0.02, 0.0, 0.02))
     cfg.add_pixelgrid(size=5)
     cfg.set_piff_shape_method("gauss")
     cfg.to_yaml(tmp_path / "fit.yaml")
@@ -97,7 +108,7 @@ def test_from_piff_config_is_used_as_is():
     assert FitConfig.from_piff_config(raw).piff_config("H158") == raw
 
 
-@pytest.mark.parametrize("kernel", [None, "signed", "positive", "gaussian"])
+@pytest.mark.parametrize("kernel", [None, "signed", "blur", "gaussian"])
 @pytest.mark.parametrize("pixelgrid", [False, True])
 def test_piff_builds_every_combination(kernel, pixelgrid):
     cfg = FitConfig()
@@ -114,7 +125,7 @@ def test_piff_builds_every_combination(kernel, pixelgrid):
 
 
 def test_mtf_component_matches_simulation_kernel():
-    # CLAUDE.md §6.1: Piff's GaussianMixture with our constants = the truth MTF at scale 1.
+    # Piff's GaussianMixture with our constants = the truth MTF at scale 1.
     cfg = FitConfig()
     mixture = piff.Model.process(cfg.piff_config("H158")["components"][1]["model"])
     np.testing.assert_allclose(mixture.weights, np.array(MTF_WEIGHTS) / sum(MTF_WEIGHTS))

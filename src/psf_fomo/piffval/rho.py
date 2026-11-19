@@ -1,7 +1,7 @@
 """ρ statistics (Rowe 2010; Jarvis et al. 2016) with a chosen moment algorithm.
 
 Piff's ``RhoStats`` measures data and model stars with the process-wide shape method (``hsm``
-by default), which fails on most native H158 stamps (Phase 3). `MomentRhoStats` overrides the
+by default), which can fail on undersampled stamps. `MomentRhoStats` overrides the
 per-star measurement hook (``Stats._measure_size_shape``) to use one of Piff's algorithms
 directly, so the global method is never changed. Everything else is Piff's: model stars drawn
 at the fitted flux and centre, T = trace in arcsec², reduced shear g, positions (u, v) in
@@ -10,8 +10,9 @@ arcsec, stars flagged on either side dropped, TreeCorr ``GGCorrelation`` (needs 
 
     ρ1 = ⟨δg δg⟩, ρ2 = ⟨g δg⟩, ρ3 = ⟨(g δT/T)(g δT/T)⟩, ρ4 = ⟨δg (g δT/T)⟩, ρ5 = ⟨g (g δT/T)⟩,
 
-with δg = g_data − g_model, δT = T_data − T_model. wmom measures both about the catalog
-position (no centroid fit), which is what model − data comparisons need. One SCA spans
+with δg = g_data − g_model, δT = T_data − T_model. Piff measures data and model stars about the
+same fitted position (``star.fit.center``; Piff ≥ 280064f), which wmom needs since it has
+no centroid fit. One SCA spans
 ≈ 7.5′, so the default separations are 0.1′ … 10′. τ statistics need a galaxy catalogue and
 are not included.
 """
@@ -54,10 +55,13 @@ class MomentRhoStats(piff.RhoStats):
         return getattr(star, self.algorithm)
 
     def measureShapes(self, psf, stars, model_properties=None, fourth_order=False,
-                      raw_moments=False, logger=None):
-        positions, data, model = super().measureShapes(psf, stars, model_properties,
-                                                       fourth_order, raw_moments, logger)
-        # Record how many stars survive the flag cut that compute() applies.
+                      raw_moments=False, include_flagged=False, logger=None):
+        # Keywords: Piff has inserted arguments before ``logger`` in the past.
+        positions, data, model = super().measureShapes(
+            psf, stars, model_properties=model_properties, fourth_order=fourth_order,
+            raw_moments=raw_moments, include_flagged=include_flagged, logger=logger)
+        # Record how many stars survive Piff's flag cuts (flagged stars are dropped before
+        # measuring, failed measurements in compute()).
         self.n_input = len(stars)
         self.n_used = int(np.sum((data[:, 6] == 0) & (model[:, 6] == 0)))
         return positions, data, model

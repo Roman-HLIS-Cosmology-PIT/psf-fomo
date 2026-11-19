@@ -4,7 +4,7 @@ import datetime
 import galsim
 import galsim.roman
 
-# A Roman-observable pointing used in prev_code (RA, Dec in degrees).
+# Default pointing for the Roman WCS: a Roman-observable field (RA, Dec in degrees).
 DEFAULT_RA = 61.24
 DEFAULT_DEC = -48.42
 

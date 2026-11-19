@@ -113,9 +113,10 @@ def test_roman_noise_and_wcs():
     assert all(s["gain"] == GAIN for s in stars)
 
 
-def test_chromatic_flat_sed_flux():
+@pytest.mark.parametrize("sed", ["flat", None])
+def test_flux_chromatic_default_and_monochromatic(sed):
     sim = RomanSimulation(seed=4)
-    sim.set_chromatic("flat")
+    sim.set_chromatic(sed)
     result = sim.run(save_noiseless=True)
     total_e = result.noiseless[0, 1].array.sum() * GAIN
     assert 0.97 * result.catalogs[0][0]["flux"] < total_e < result.catalogs[0][0]["flux"]

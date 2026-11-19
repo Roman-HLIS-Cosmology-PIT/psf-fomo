@@ -1,9 +1,13 @@
 """Moment measurements on one star image, reported in one common convention.
 
 The algorithms are Piff's own (``piff.Star.hsm``, ``.am``, ``.gauss``, ``.wmom(fwhm)``; Piff
-commit 6ada1330). We call them directly on each star and never change Piff's global shape
+commit 280064f). We call them directly on each star and never change Piff's global shape
 method (``piff.set_shape_method``), which would also change Piff's fitting initialisation and
 star selection.
+
+Piff's am, gauss and wmom start from (wmom: are centred on) ``star.image_pos`` shifted by
+``star.fit.center``. On a star made with `make_star` that offset is zero, so everything here is
+measured about the star position; pass fresh stars, not stars returned by a Piff fit.
 
 All Piff methods return ``(flux, cenu, cenv, sigma, g1, g2, flag)`` in local world coordinates
 (arcsec), with ``sigma`` = det(M)^(1/4) and g the reduced shear. We convert to:
@@ -86,7 +90,8 @@ def measure_star(star, algorithm, weight_fwhm=DEFAULT_WMOM_FWHM):
     Parameters
     ----------
     star : piff.Star
-        Star with image, weight and position (``star.image_pos``).
+        Star with image, weight and position (``star.image_pos``). Measured about
+        ``image_pos`` shifted by ``star.fit.center`` (zero for a new star).
     algorithm : {'hsm', 'am', 'gauss', 'wmom'}
         Measurement algorithm (see the module docstring for conventions).
     weight_fwhm : float

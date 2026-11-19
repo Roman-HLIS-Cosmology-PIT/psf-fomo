@@ -14,8 +14,8 @@ import pytest
 from psf_fomo.models import GaussianMoments  # noqa: F401  (registered)
 from psf_fomo.piffval import FitResult, diagnostics, plotting
 from psf_fomo.piffval.components import components, kernel_moments, leaf_psfs
-from psf_fomo.piffval.residuals import (FLAG_PIFF, draw_model_oversampled, moment_residuals,
-                                        moment_summary)
+from psf_fomo.piffval.residuals import (FLAG_PIFF, _image_pairs, draw_model_oversampled,
+                                        moment_residuals, moment_summary)
 from psf_fomo.piffval.run import make_logger
 
 PIX = galsim.roman.pixel_scale
@@ -87,6 +87,18 @@ def test_moment_residuals_exact_model(exact_fit):
     assert "dT_T_err" in summary.colnames and "n_flagged" in summary.colnames
 
 
+def test_data_comparison_measures_both_about_the_catalog_position(exact_fit):
+    # Piff (≥ 280064f) measures am/gauss/wmom about star.image_pos + star.fit.center. The data
+    # and model sides of 'data' must use the same position: both are fresh stars (centre 0).
+    psf, stars, _, table, sim = exact_fit
+    star = piff.Star(stars[0].data, stars[0].fit.withNew(center=(0.02, -0.01)))
+    pairs = dict(_image_pairs(psf, star, table[0], sim, ("data",), 5, True))
+    data, model = pairs["data"]
+    assert tuple(data.fit.center) == (0.0, 0.0) and tuple(model.fit.center) == (0.0, 0.0)
+    assert data.image_pos == model.image_pos == star.image_pos
+    np.testing.assert_array_equal(data.image.array, star.image.array)
+
+
 def test_piff_flag_propagates(exact_fit):
     psf, stars, _, table, sim = exact_fit
     table = table.copy()
@@ -134,7 +146,7 @@ KERNEL_PART = {"type": "Convolve", "components": [
     {"type": "Simple",
      "model": {"type": "GaussianMixture", "weights": [1.0], "sigmas": [0.12]},
      "interp": {"type": "Fixed"}},
-    {"type": "Simple", "model": {"type": "GaussianMoments"},
+    {"type": "Simple", "model": {"type": "GaussianBlur"},   # exact for a Gaussian kernel
      "interp": {"type": "Polynomial", "order": 0}}]}
 
 
@@ -163,8 +175,8 @@ def test_kernel_table(synthetic_stars):
 
 
 def test_pixelgrid_table_in_sum(synthetic_stars):
-    # In a Sum the kernel/grid split is not unique (CLAUDE.md §9.2, §9.4: the grid can absorb
-    # part of a broadening), so check only identities: the Convolve part has unit flux, so the
+    # In a Sum the kernel/grid split is not unique (the grid can absorb part of a
+    # broadening), so check only identities: the Convolve part has unit flux, so the
     # grid flux is the model's total flux minus 1, star by star.
     stars, rows = kernel_stars(synthetic_stars)
     psf = piff.PSF.process({"type": "Sum", **ITERATIONS, "components": [

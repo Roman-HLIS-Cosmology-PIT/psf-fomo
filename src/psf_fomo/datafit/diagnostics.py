@@ -6,7 +6,7 @@ the catalog values of each star:
 - ``star_id`` (catalog id), ``sca``, ``x``, ``y`` (fit-frame = GalSim-frame image
   coordinates, 1-based), ``x_l2``, ``y_l2`` (the same stars in the L2 file's own frame, when
   the fit ran on a flipped copy), ``phase_x``, ``phase_y`` (position − round(position),
-  CLAUDE.md §5.1, fit frame).
+  fit frame).
 - ``mag`` (``ABZP`` − 2.5 log10 ``flux_cat``; NaN without ``ABZP``), ``flux_cat`` (catalog
   flux, DN/s), ``flux_cat_r`` = fitted flux / ``flux_cat``. A diagnostic only: a Kron flux
   misses part of the light, so it is not expected to be 1.

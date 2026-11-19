@@ -6,6 +6,7 @@ import pytest
 
 from psf_fomo.piffval import FitConfig, PiffValidation, load_fit, piff_shape_method
 from psf_fomo.piffval import diagnostics
+from psf_fomo.piffval.components import kernel_moments
 from psf_fomo.piffval.run import NOT_CONVERGED, choose_reserve, make_logger
 from psf_fomo.sim import RomanSimulation
 
@@ -107,7 +108,11 @@ def test_closed_loop_no_error(tmp_path):
     pv.set_reserve(0.2, seed=2)
     res = pv.run(save_to=tmp_path / "fit")
     fs = res.fit_summary
-    assert fs["converged"] and fs["n_reserve"] == 4 and fs["n_flagged"] == 0
+    # Random placement may put a pair within the default min_sep (2.5″): both are rejected.
+    n_kept = fs["n_input"] - fs["n_rejected"]
+    assert fs["n_input"] == 20 and len(res.table) == n_kept
+    n_fit = n_kept - int(0.2 * n_kept)
+    assert fs["converged"] and fs["n_reserve"] == int(0.2 * n_kept) and fs["n_flagged"] == 0
     # dof ≈ 16 × 622: 3σ of χ²/dof is ≈ 0.03.
     assert abs(fs["chisq_dof"] - 1) < 0.05
     good = res.table[res.table["flag"] == 0]
@@ -118,7 +123,7 @@ def test_closed_loop_no_error(tmp_path):
     ms = res.moment_summary()
     fit_rows = ms[ms["set"] == "fit"]
     for row in fit_rows:
-        assert row["n"] + row["n_flagged"] == 16
+        assert row["n"] + row["n_flagged"] == n_fit
         if row["comparison"] != "data":  # noiseless truth: model error only
             assert abs(row["dT_T_mean"]) < 2e-3, (row["comparison"], row["algorithm"])
     os_hsm = fit_rows[(fit_rows["comparison"] == "truth_os") & (fit_rows["algorithm"] == "hsm")]
@@ -143,9 +148,10 @@ def test_closed_loop_no_error(tmp_path):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("kind", ["positive", "signed"])
+@pytest.mark.parametrize("kind", ["blur", "signed"])
 def test_closed_loop_kernel_recovered(kind):
-    # In-family test: truth = optics ⊛ Gaussian kernel M ⊛ MTF; fit the same with GaussianMoments.
+    # Truth = optics ⊛ Gaussian kernel M ⊛ MTF; fit with Piff's GaussianBlur (in family) or
+    # our signed GaussianMoments.
     true_m = (0.03, 0.005, 0.02)
     sim = faint_simulation(kernel=true_m)
     cfg = FitConfig()
@@ -153,9 +159,10 @@ def test_closed_loop_kernel_recovered(kind):
     cfg.add_kernel(kind, order=0)
     res = PiffValidation(sim, cfg).run()
     assert res.fit_summary["converged"]
-    assert res.fit_summary["kernel_max_nfev"] == 0
+    # None for GaussianBlur (no per-star scipy fit), 0 for GaussianMoments.
+    assert res.fit_summary["kernel_max_nfev"] == (None if kind == "blur" else 0)
     kernel = res.psf.components[1]
-    fitted = res.psf.stars[0].fit.get_params(kernel._num)
+    fitted, _ = kernel_moments(kernel, res.psf.stars[0].fit.get_params(kernel._num))
     # Signed is first order in M / T_psf (T_psf ≈ 0.6 pix² pre-pixel for H158).
-    np.testing.assert_allclose(fitted, true_m, atol=3e-3 if kind == "positive" else 5e-3)
+    np.testing.assert_allclose(fitted, true_m, atol=3e-3 if kind == "blur" else 5e-3)
     assert abs(res.fit_summary["chisq_dof"] - 1) < 0.05
