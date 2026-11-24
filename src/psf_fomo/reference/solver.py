@@ -26,7 +26,7 @@ Simplifications:
   problem.
 - The star table, components and moments of a solution come from `star_table`,
   `components` and `moment_table`: simulation versions here; real-data fits use the subclass
-  `psf_fomo.datafit.reference.DataReferenceSolver`.
+  `psf_fomo.piff_datafit.reference.DataReferenceSolver`.
 - A centered PixelGrid is optimized over the full grid (Piff restricts it to zero centroid and
   fits the star center instead); constraints inside a model's ``fit`` are not imposed.
 - Only fit stars (not reserve, not flagged) enter χ², so only they are drawn during the
@@ -49,10 +49,10 @@ import galsim.roman
 import piff
 from piff.config import LoggerWrapper
 
-from ..piffval import diagnostics
-from ..piffval.config import blur_params
-from ..piffval.components import components as component_tables, kind_of, leaf_psfs
-from ..piffval.residuals import moment_residuals
+from ..piff_simfit import diagnostics
+from ..piff_simfit.config import blur_params
+from ..piff_simfit.components import components as component_tables, kind_of, leaf_psfs
+from ..piff_simfit.residuals import moment_residuals
 
 # Finite-difference steps per component kind (parameter units: waves, pix², grid values).
 STEPS = {"optics": 1e-3, "kernel": 1e-3, "pixelgrid": 1e-4, "other": 1e-4}
@@ -138,7 +138,7 @@ class ReferenceSolver:
     Parameters
     ----------
     psf : piff.PSF
-        The model, fitted or only initialized (e.g. `PiffValidation.initialize`). Its
+        The model, fitted or only initialized (e.g. `PiffSimFit.initialize`). Its
         structure and drawing are used; its interpolators are not changed.
     stars : list of piff.Star
         Stars with data images and fit parameters (``psf.stars`` after a fit, or the
@@ -377,7 +377,7 @@ class ReferenceSolver:
         label : str
             Name stored in the summary.
         moments : dict, optional
-            Keyword arguments of `psf_fomo.piffval.residuals.moment_residuals` (see
+            Keyword arguments of `psf_fomo.piff_simfit.residuals.moment_residuals` (see
             `moment_table`). Default None = no moment residuals.
         info : dict, optional
             Extra entries for the summary (e.g. optimizer status).
@@ -453,7 +453,7 @@ class ReferenceSolver:
         raise ValueError("report must be 'all' or 'fit'")
 
     def star_table(self, stars, rows):
-        """Star table of a solution (simulation: `piffval.diagnostics.star_table`); ``rows``
+        """Star table of a solution (simulation: `piff_simfit.diagnostics.star_table`); ``rows``
         are the catalog rows of ``stars``."""
         return diagnostics.star_table(self.psf, stars, rows)
 
@@ -539,14 +539,14 @@ class ReferenceResult:
     stars : list of piff.Star
         Stars with the solution's parameters, profiled flux, the held center.
     table : astropy.table.Table
-        As `FitResult.table` (``du = dv = 0`` with catalog centers; ``dof`` = pixels − 1
+        As `PiffSimFitResult.table` (``du = dv = 0`` with catalog centers; ``dof`` = pixels − 1
         per star), or the real-data star table for `DataReferenceSolver`.
     summary : dict
         χ², reference dof, ``chisq_dof``, ``n_free``, per-leaf info, optimizer status.
     moments : astropy.table.Table or None
-        As `FitResult.moments`.
+        As `PiffSimFitResult.moments`.
     components : dict
-        As `FitResult.components()`. The optics ``fit_err`` column still holds Piff's
+        As `PiffSimFitResult.components()`. The optics ``fit_err`` column still holds Piff's
         parameter σ of the given solution (the reference does not estimate errors).
     x : numpy.ndarray or None
         The solver's free coefficients of this solution.
@@ -563,11 +563,11 @@ class ReferenceResult:
 
 def reference_from_fit(result, freeze=(), starts=("given",), max_nfev=50, moments="same",
                        report="all", given=True):
-    """Reference optimum of the model of a `FitResult` (starting from Piff's solution).
+    """Reference optimum of the model of a `PiffSimFitResult` (starting from Piff's solution).
 
     Parameters
     ----------
-    result : FitResult
+    result : PiffSimFitResult
         A Piff fit (needs its stars: in memory, or reloaded with the simulation).
     freeze, starts, max_nfev, report, given
         See `ReferenceSolver` and `ReferenceSolver.solve`.
@@ -592,9 +592,9 @@ def reference_from_fit(result, freeze=(), starts=("given",), max_nfev=50, moment
 
 def reference_from_config(validation, freeze=(), starts=("zero",), max_nfev=50, moments=None,
                           report="all", given=True):
-    """Reference optimum of a `PiffValidation`'s model without running Piff's fit.
+    """Reference optimum of a `PiffSimFit`'s model without running Piff's fit.
 
-    Piff only initializes the model (`PiffValidation.initialize`); the solver starts from that
+    Piff only initializes the model (`PiffSimFit.initialize`); the solver starts from that
     initialization (``'given'``) and/or from zero kernels and grids (``'zero'``, default).
     ``report``, ``given``: see `ReferenceSolver.solve`.
 
@@ -615,8 +615,8 @@ def comparison_table(results, comparison="truth_os", algorithm="hsm"):
     Parameters
     ----------
     results : dict
-        Label → `ReferenceResult`, `FitResult` or `DataFitResult` (a fit's row uses Piff's
-        own χ² and dof; ReferenceResults use the reference dof, so compare Piff with the
+        Label → `ReferenceResult`, `PiffSimFitResult` or `PiffDataFitResult` (a fit's row uses
+        Piff's own χ² and dof; ReferenceResults use the reference dof, so compare Piff with the
         reference via the ``'given'`` solution of `ReferenceSolver.solve`).
     comparison, algorithm : str
         Which moment residuals to summarize (if present). For real data use

@@ -57,7 +57,6 @@ def test_hsm_recovers_gaussian():
 
 @pytest.mark.parametrize("algorithm", ["am", "gauss"])
 def test_ngmix_adaptive_recovers_gaussian(algorithm):
-    pytest.importorskip("ngmix")
     # Small noise (peak S/N ~ 2000): on this exactly noiseless star ngmix's Gaussian fit
     # converges to the right parameters but returns flag 512, which Piff reports as failure.
     res = measure_star(gaussian_star(3.0, 0.1, -0.05, noise=0.01), algorithm)
@@ -69,7 +68,6 @@ def test_ngmix_adaptive_recovers_gaussian(algorithm):
 
 
 def test_wmom_matches_analytic_weighted_moments():
-    pytest.importorskip("ngmix")
     sigma, g1, g2, fwhm = 2.0, 0.1, -0.05, 0.4
     res = measure_star(gaussian_star(sigma, g1, g2), "wmom", weight_fwhm=fwhm)
     assert res["flag"] == 0
@@ -87,8 +85,6 @@ def test_wmom_matches_analytic_weighted_moments():
 
 @pytest.mark.parametrize("algorithm", ["hsm"] + NGMIX_ALGORITHMS)
 def test_rotated_wcs_gives_world_shapes(algorithm):
-    if algorithm != "hsm":
-        pytest.importorskip("ngmix")
     theta = np.radians(30.0)
     c, s = np.cos(theta), np.sin(theta)
     rotated = galsim.JacobianWCS(PIX * c, -PIX * s, PIX * s, PIX * c)
@@ -100,8 +96,6 @@ def test_rotated_wcs_gives_world_shapes(algorithm):
 
 @pytest.mark.parametrize("algorithm", ["hsm"] + NGMIX_ALGORITHMS)
 def test_native_and_oversampled_agree_when_well_sampled(algorithm):
-    if algorithm != "hsm":
-        pytest.importorskip("ngmix")
     # Native: drawn with the pixel ('auto'). Oversampled: pixel-convolved profile sampled on
     # a 5× finer grid. Both images represent the same effective PSF.
     native = measure_star(gaussian_star(4.0, 0.05, 0.0, method="auto"), algorithm,

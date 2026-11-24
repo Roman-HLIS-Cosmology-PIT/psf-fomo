@@ -2,7 +2,7 @@
 
 Checks our assumptions about it (units, parameter order, PSD projection) against the
 simulation's Gaussian kernel (`psf_fomo.sim.psf.gaussian_kernel` of the PSD-clipped M), and
-the package glue: FitConfig, components, reference solver.
+the package glue: PiffFitConfig, components, reference solver.
 """
 import copy
 
@@ -12,10 +12,10 @@ import galsim.roman
 import piff
 import pytest
 
-from psf_fomo.piffval import FitConfig
-from psf_fomo.piffval.components import component_image, kernel_moments, kind_of, leaf_psfs
-from psf_fomo.piffval.config import blur_moments, blur_params
-from psf_fomo.piffval.run import make_logger
+from psf_fomo.piff_simfit import PiffFitConfig
+from psf_fomo.piff_simfit.components import component_image, kernel_moments, kind_of, leaf_psfs
+from psf_fomo.piff_simfit.config import blur_moments, blur_params
+from psf_fomo.piff_simfit.run import make_logger
 from psf_fomo.reference import ReferenceSolver
 from psf_fomo.reference.solver import BLUR_STEP
 from psf_fomo.sim.psf import clip_to_psd, gaussian_kernel
@@ -48,7 +48,7 @@ def test_blur_draws_like_clipped_gaussian_kernel(m):
 
 
 def test_config_builds_blur():
-    cfg = FitConfig()
+    cfg = PiffFitConfig()
     cfg.set_optics("pinned")
     cfg.add_kernel("blur", init=KERNEL_M)
     kernel = cfg.piff_config("H158")["components"][1]
@@ -67,7 +67,7 @@ def test_config_builds_blur():
 
 
 def test_old_settings_without_interp_mean_polynomial():
-    cfg = FitConfig()
+    cfg = PiffFitConfig()
     cfg.add_kernel("signed")
     del cfg.config["kernel"]["interp"]
     assert cfg.piff_config("H158")["components"][1]["interp"]["type"] == "Polynomial"

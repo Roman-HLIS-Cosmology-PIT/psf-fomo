@@ -3,19 +3,21 @@
 A test bench for PSF modeling of the Nancy Grace Roman Space Telescope Wide Field
 Instrument (WFI): simulate Roman star images with known PSF errors, measure PSF moments, fit
 the stars with [Piff](https://github.com/rmjarvis/Piff), and check how well the fitted PSF
-recovers the truth. It can also fit Piff PSF models to real Roman L2 images.
+recovers the truth. It can also fit Piff PSF models to real Roman L2 images. This tool is in active
+development and may be updated with high cadence
 
 ## Installation
 
-psf-fomo needs Python ≥ 3.10, a GalSim with its Roman science-frame update (GalSim's `main`
-branch, tested at commit `09b7f5d3f`; not yet in a release: `galsim.roman` WCS and PSFs in
-Roman's science frame, like L2 files) and a recent Piff. Install GalSim from a clone of its
-`main` branch (`pip install .`) as for Piff below. It is built against Piff's
-`main` branch at commit `280064f7e6bb648c82bb41643d8a10fa89034566`, which is newer than the
-latest Piff release (it needs, e.g., Piff's `GaussianBlur` model and its moment methods for
-undersampled stars), so Piff is installed from a clone rather than as a dependency.
+psf-fomo needs Python ≥ 3.10, as well as GalSim and Piff. To use with most
+up-to-date versions of these codes, consider using the main branch of GalSim and Piff until a new
+tagged version with current changes is released. The roman module has been updated in GalSim's main branch
+and contains a flip to the image that is not in v2.8.5 of the code.
+Piff has also had some additions that may not be included in the latest tagged version that are used here.
+If using this on real Roman data, beware that changes to both GalSim and Piff are ongoing. As develop, the 
+code here may also change. 
 
-1. Create an environment with the dependencies (conda shown; pip works as well):
+1. If you want to create an new environment with the needed
+ dependencies, you can use:
    ```
    conda env create -f environment.yml
    conda activate psf-fomo
@@ -24,24 +26,15 @@ undersampled stars), so Piff is installed from a clone rather than as a dependen
    ```
    git clone https://github.com/rmjarvis/Piff.git
    cd Piff
-   git checkout 280064f7e6bb648c82bb41643d8a10fa89034566
+   git switch main
    pip install .
-   cd ..
    ```
-3. Install psf-fomo (editable), with the optional extras you need:
+3. Install psf-fomo. This also installs its other dependencies, including ngmix and TreeCorr:
    ```
    git clone <this repository> psf-fomo
    cd psf-fomo
-   pip install -e ".[moments,stats,dev]"
+   pip install .
    ```
-   Extras: `moments` (ngmix: the `am`, `gauss` and `wmom` moment algorithms), `stats`
-   (TreeCorr: ρ statistics), `dev` (pytest).
-
-Check the installation by running the fast tests:
-```
-python -m pytest            # fast tests
-python -m pytest -m slow    # slow tests: Roman PSF rendering and full Piff fits
-```
 
 ## What it can do
 
@@ -65,9 +58,9 @@ python -m pytest -m slow    # slow tests: Roman PSF rendering and full Piff fits
 - Measured vs injected PSF errors between simulations, star by star; dependence on sub-pixel
   phase and S/N.
 
-**Piff validation** (`psf_fomo.piffval`, `psf_fomo.reference`)
+**Piff fits of simulations** (`psf_fomo.piff_simfit`, `psf_fomo.reference`)
 - Piff configurations built from high-level options: Roman optics (free or pinned), the fixed
-  MTF, a fitted kernel (signed `GaussianMoments`, Piff's `GaussianBlur` or `Gaussian`), a
+  MTF, a fitted kernel (Piff's `GaussianBlur` or `Gaussian`), a
   `PixelGrid`, outlier rejection, iteration controls, reserve stars.
 - Fits in memory or through Piff's own file-based input.
 - Diagnostics: χ², flux and centroid recovery, convergence, moment residuals of model vs
@@ -76,22 +69,22 @@ python -m pytest -m slow    # slow tests: Roman PSF rendering and full Piff fits
 - A reference solver: the joint χ² optimum of the same model, to separate optimizer
   limitations from model limitations.
 
-**Real data** (`psf_fomo.datafit`)
+**Piff fits of real data** (`psf_fomo.piff_datafit`)
 - Roman L2 images (converted from ASDF to FITS), detection catalogs, star selection and cuts
   through Piff, Piff fits with the same model builder and diagnostics (no truth), and the
   reference optimum.
 - Synthetic L2 files from simulations, to try the workflow without real data.
 
 Features marked **experimental** in the documentation (telescope-attitude orientation,
-the stellar-locus selection, `DataFit.initialize`) are still being tested.
+the stellar-locus selection, `PiffDataFit.initialize`) are still being tested.
 
 ## Documentation
 
 - [`docs/conventions.md`](docs/conventions.md): units, coordinates, moment definitions,
   the simulated PSF, fitting conventions.
 - [`docs/sim.md`](docs/sim.md), [`docs/moments.md`](docs/moments.md),
-  [`docs/piffval.md`](docs/piffval.md), [`docs/datafit.md`](docs/datafit.md): usage of each
-  module.
+  [`docs/piff_simfit.md`](docs/piff_simfit.md),
+  [`docs/piff_datafit.md`](docs/piff_datafit.md): usage of each module.
 - [`CHANGELOG.md`](CHANGELOG.md): changes between versions.
 
 ## License

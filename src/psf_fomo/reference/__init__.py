@@ -1,8 +1,8 @@
 """Reference solver: joint χ² optimum of the model Piff fits.
 
 - `ReferenceSolver`: the solver on a Piff PSF and its stars.
-- `reference_from_fit`: optimum of a `FitResult`'s model, compared with Piff's solution.
-- `reference_from_config`: optimum of a `PiffValidation`'s model without a Piff fit.
+- `reference_from_fit`: optimum of a `PiffSimFitResult`'s model, compared with Piff's solution.
+- `reference_from_config`: optimum of a `PiffSimFit`'s model without a Piff fit.
 - `comparison_table`: χ²/dof, flux ratios and moment residuals side by side.
 """
 from .solver import (ReferenceResult, ReferenceSolver, comparison_table, reference_from_config,

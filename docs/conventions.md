@@ -1,7 +1,7 @@
 # Conventions
 
 Units, coordinates and definitions used throughout psf-fomo. The module pages (`sim.md`,
-`moments.md`, `piffval.md`, `datafit.md`) refer to this page.
+`moments.md`, `piff_simfit.md`, `piff_datafit.md`) refer to this page.
 
 ## Units
 
@@ -16,7 +16,7 @@ Units, coordinates and definitions used throughout psf-fomo. The module pages (`
 | Zernike aberrations | waves |
 | magnitudes | AB |
 | simulated images | ADU = e⁻ / `galsim.roman.gain`, background subtracted |
-| real L2 images | the file's units (DN/s; see `datafit.md`) |
+| real L2 images | the file's units (DN/s; see `piff_datafit.md`) |
 | jitter | milliarcsec |
 
 Native pixel: `galsim.roman.pixel_scale` = 0.11″. Measured sizes are on the sky (through each
@@ -38,7 +38,7 @@ the nominal 0.11″, also with the Roman WCS. For a size in nominal native pix²
 - **Pixel frame.** Roman L2 files, `galsim.roman`'s WCS and PSFs, and so the simulations and
   Piff's `RomanOptics`, are all in Roman's science frame (needs a GalSim with its
   science-frame update, currently GalSim `main`); files are fitted as they are
-  (`datafit.md`).
+  (`piff_datafit.md`).
 
 ## Moments
 
@@ -108,7 +108,7 @@ exactly from the configuration, and changing one setting does not change the oth
 ## Fitting
 
 - One Piff fit per SCA; observations of that SCA are pooled.
-- Piff model structure built by `FitConfig`:
+- Piff model structure built by `PiffFitConfig`:
   `Sum[ Convolve[ RomanOptics, kernel, MTF ], Simple(PixelGrid) ]`, pieces left out when not
   requested.
 - **Chromatic model**: RomanOptics is fitted monochromatic by default (`chromatic=False`,
@@ -123,7 +123,7 @@ exactly from the configuration, and changing one setting does not change the oth
   "PSF fit did not converge" (it reached `max_iter`); `niter` and `max_iter` are reported. A
   fit is never reported as converged otherwise.
 - **Star selection cuts** are Piff's rejection step, the same for simulations
-  (`PiffValidation.set_cuts`) and real data (`StarCatalog.set_cuts`). Default: `min_sep` =
+  (`PiffSimFit.set_cuts`) and real data (`StarCatalog.set_cuts`). Default: `min_sep` =
   2.5″ (stars with any other object within 2.5″ are rejected). Simulations also default to
   `max_snr_weight` = 0 (no S/N cap on the weights); real data keeps Piff's default (100)
   unless set. For simulations the cuts apply to each observation separately.

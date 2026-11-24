@@ -8,9 +8,9 @@ import piff
 import pytest
 
 from psf_fomo.models import GaussianMoments  # noqa: F401  (registered)
-from psf_fomo.piffval import FitConfig, FitResult, PiffValidation, diagnostics
-from psf_fomo.piffval.config import blur_params
-from psf_fomo.piffval.run import make_logger
+from psf_fomo.piff_simfit import PiffFitConfig, PiffSimFitResult, PiffSimFit, diagnostics
+from psf_fomo.piff_simfit.config import blur_params
+from psf_fomo.piff_simfit.run import make_logger
 from psf_fomo.reference import ReferenceSolver, comparison_table
 from psf_fomo.reference.solver import basis_matrix
 from psf_fomo.sim import RomanSimulation
@@ -183,7 +183,7 @@ def test_comparison_table(synthetic_stars):
     psf = fit(kernel_config(), stars)
     out = ReferenceSolver(psf, psf.stars, rows).solve(max_nfev=20)
     table = diagnostics.star_table(psf, psf.stars, rows)
-    piff_result = FitResult(psf, table, {"chisq_dof": 0.0, "converged": True}, {}, {})
+    piff_result = PiffSimFitResult(psf, table, {"chisq_dof": 0.0, "converged": True}, {}, {})
     t = comparison_table({"piff": piff_result, "piff, true centers": out["given"],
                           "optimum": out["optimum"]["given"]})
     assert list(t["label"]) == ["piff", "piff, true centers", "optimum"]
@@ -199,10 +199,10 @@ def test_reference_from_config_in_family_kernel():
     s.set_brightness(mag_range=(19.5, 20.5))
     s.set_noise("gaussian", sigma=10.0)
     s.add_kernel(*KERNEL_M)
-    cfg = FitConfig()
+    cfg = PiffFitConfig()
     cfg.set_optics("pinned")
     cfg.add_kernel("blur", order=0)
-    pv = PiffValidation(s.run(), cfg)
+    pv = PiffSimFit(s.run(), cfg)
     from psf_fomo.reference import reference_from_config
     out = reference_from_config(pv, starts=("zero",), max_nfev=40)
     best = out["optimum"]["zero"]

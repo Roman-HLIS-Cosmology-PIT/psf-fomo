@@ -1,6 +1,6 @@
 """Test helper: small fields of stars and galaxies written in the L2 layout.
 
-The file writers are the package's (`psf_fomo.datafit.synthetic`); this module adds the
+The file writers are the package's (`psf_fomo.piff_datafit.synthetic`); this module adds the
 analytic test scenes (Gaussian PSF, sheared exponential galaxies) and opens test files. Like
 real L2 files and galsim.roman's WCS, they are in Roman's science frame.
 """
@@ -8,14 +8,14 @@ import numpy as np
 import galsim
 import galsim.roman
 
-from psf_fomo.datafit.synthetic import write_l2_file  # noqa: F401
-from psf_fomo.datafit.synthetic import write_sep_catalog as sep_catalog
+from psf_fomo.piff_datafit.synthetic import write_l2_file  # noqa: F401
+from psf_fomo.piff_datafit.synthetic import write_sep_catalog as sep_catalog
 from psf_fomo.sim.wcs import DEFAULT_DEC, DEFAULT_RA
 
 
 def open_l2(path, **kwargs):
     """`L2Image` of a test file."""
-    from psf_fomo.datafit import L2Image
+    from psf_fomo.piff_datafit import L2Image
     return L2Image(path, **kwargs)
 
 

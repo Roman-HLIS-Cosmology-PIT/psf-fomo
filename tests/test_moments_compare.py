@@ -144,7 +144,6 @@ def test_global_shape_method_untouched():
 
 
 def test_wmom_labels():
-    pytest.importorskip("ngmix")
     mv = MomentsValidation({"a": FakeSimulation(n_stars=2)})
     mv.set_algorithms(["wmom"], wmom_fwhm=[0.3, 0.5])
     mv.set_images(["noiseless"])

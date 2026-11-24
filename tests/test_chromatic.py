@@ -10,11 +10,11 @@ import pytest
 from astropy.table import Table
 
 from l2files import field, open_l2, write_field
-from psf_fomo.datafit import DataFit, StarCatalog
+from psf_fomo.piff_datafit import PiffDataFit, StarCatalog
 from psf_fomo.io import to_plain
-from psf_fomo.piffval import FitConfig, PiffValidation
-from psf_fomo.piffval.config import needs_star_seds, piff_default_chromatic
-from psf_fomo.piffval.residuals import draw_profile
+from psf_fomo.piff_simfit import PiffFitConfig, PiffSimFit
+from psf_fomo.piff_simfit.config import needs_star_seds, piff_default_chromatic
+from psf_fomo.piff_simfit.residuals import draw_profile
 from psf_fomo.sim import RomanSimulation
 from psf_fomo.sim import storage
 from psf_fomo.sim.psf import (band_weights, effective_profile, make_optical_model,
@@ -248,14 +248,14 @@ def test_sed_file_for_piff(tmp_path):
 
 def test_fit_is_monochromatic_by_default():
     assert piff_default_chromatic() is True       # Piff's RomanOptics default (Piff main)
-    psf = FitConfig().piff_config("H158")         # ours: monochromatic
+    psf = PiffFitConfig().piff_config("H158")         # ours: monochromatic
     assert psf["components"][0]["chromatic"] is False and not needs_star_seds(psf)
-    alone = FitConfig()
+    alone = PiffFitConfig()
     alone.set_optics("free", chromatic=True)
     alone.set_mtf(False)
     psf = alone.piff_config("H158")
     assert psf["type"] == "RomanOptics" and psf["chromatic"] is True and needs_star_seds(psf)
-    piffs_default = FitConfig()
+    piffs_default = PiffFitConfig()
     piffs_default.set_optics("free", chromatic=None)
     piffs_default.set_mtf(False)
     assert "chromatic" not in piffs_default.piff_config("H158")
@@ -266,7 +266,7 @@ def test_fit_is_monochromatic_by_default():
 def test_chromatic_optics_in_a_composite_model_is_refused():
     # Piff's Convolve / Sum draw without the stars' SEDs: every star would be flagged.
     for extra in ("mtf", "kernel", "pixelgrid"):
-        cfg = FitConfig()
+        cfg = PiffFitConfig()
         cfg.set_optics("pinned", chromatic=True)
         cfg.set_mtf(extra == "mtf")
         if extra == "kernel":
@@ -278,7 +278,7 @@ def test_chromatic_optics_in_a_composite_model_is_refused():
 
 
 def chromatic_optics_alone():
-    cfg = FitConfig()
+    cfg = PiffFitConfig()
     cfg.set_optics("pinned", chromatic=True)
     cfg.set_mtf(False)
     return cfg
@@ -287,22 +287,22 @@ def chromatic_optics_alone():
 def test_monochromatic_simulation_with_chromatic_fit_is_refused():
     sim = RomanSimulation()                          # configuration only, nothing rendered
     sim.set_chromatic(None)
-    pv = PiffValidation(sim, chromatic_optics_alone())
+    pv = PiffSimFit(sim, chromatic_optics_alone())
     with pytest.raises(ValueError, match="chromatic=False"):
         pv.check_chromatic()
-    cfg = FitConfig()
+    cfg = PiffFitConfig()
     cfg.set_optics("pinned", chromatic=False)
-    PiffValidation(sim, cfg).check_chromatic()       # consistent: no error
+    PiffSimFit(sim, cfg).check_chromatic()       # consistent: no error
 
 
 def test_file_config_gives_stars_the_simulation_sed():
     sim = RomanSimulation()
-    inp = PiffValidation(sim, FitConfig()).piff_file_config("simdir", 0, "outdir")["input"]
+    inp = PiffSimFit(sim, PiffFitConfig()).piff_file_config("simdir", 0, "outdir")["input"]
     assert inp["sed_file_name"] == "sed.fits" and inp["sed_flux_type"] == "fphotons"
     sim.set_chromatic(None)
-    cfg = FitConfig()
+    cfg = PiffFitConfig()
     cfg.set_optics("pinned", chromatic=False)
-    inp = PiffValidation(sim, cfg).piff_file_config("simdir", 0, "outdir")["input"]
+    inp = PiffSimFit(sim, cfg).piff_file_config("simdir", 0, "outdir")["input"]
     assert "sed_file_name" not in inp
 
 
@@ -310,16 +310,16 @@ def test_real_data_assumes_a_flat_sed(tmp_path):
     image, catalog = write_field(tmp_path / "f", field(n_stars=10, n_gals=0, seed=3))
     cat = StarCatalog(catalog)
     cat.select_stars("all")
-    fit = DataFit(open_l2(image), cat, chromatic_optics_alone())
+    fit = PiffDataFit(open_l2(image), cat, chromatic_optics_alone())
     t = cat.piff_table(fit.image)
     inp = fit.piff_config(tmp_path / "catalog.fits", t)["input"]
     assert inp["sed_file_name"] == "sed.fits" and fit.config()["sed"]["sed"] == "flat"
     fit.set_sed(None)
     with pytest.raises(ValueError, match="set_sed"):
         fit.piff_config(tmp_path / "catalog.fits", t)
-    cfg = FitConfig()
+    cfg = PiffFitConfig()
     cfg.set_optics("pinned", chromatic=False)
-    mono = DataFit(open_l2(image), cat, cfg)
+    mono = PiffDataFit(open_l2(image), cat, cfg)
     mono.set_sed(None)
     assert "sed_file_name" not in mono.piff_config(tmp_path / "catalog.fits", t)["input"]
 

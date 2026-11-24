@@ -29,7 +29,7 @@ from ..io import provenance, read_yaml, write_yaml
 from ..sim import Simulation, load_simulation
 from . import plotting
 from .measure import (ALGORITHMS, DEFAULT_WMOM_FWHM, algorithm_label, make_star,
-                      mark_sizes, measure_star, require_ngmix, upgrade_sizes)
+                      mark_sizes, measure_star, upgrade_sizes)
 
 IMAGE_TYPES = ("noisy", "noiseless", "oversampled")
 STAR_KEYS = ["obs", "sca", "star_id"]
@@ -159,8 +159,6 @@ class MomentsValidation:
         -------
         MomentsResult
         """
-        if set(self.config["algorithms"]) - {"hsm"}:
-            require_ngmix()  # fail before any rendering, not star by star
         tables = [self._measure_simulation(name, sim)
                   for name, sim in self.simulations.items()]
         result = MomentsResult(mark_sizes(vstack(tables)), copy.deepcopy(self.config),

@@ -13,7 +13,7 @@ in M, no boundary; start at 0. Convolving a PSF with K gives PSF + ½ M : ∇∇
 first order in M relative to the PSF's own moments (≈ 0.3 pix² pre-pixel for H158).
 
 For a kernel that can only broaden (a PSD Gaussian), use Piff's ``GaussianBlur`` (kernel kind
-``'blur'`` in `psf_fomo.piffval.FitConfig.add_kernel`); it replaced our earlier
+``'blur'`` in `psf_fomo.piff_simfit.PiffFitConfig.add_kernel`); it replaced our earlier
 ``signed=False`` mode.
 
 The per-star fit varies only M; flux and center stay fixed (Piff's reflux updates them). This

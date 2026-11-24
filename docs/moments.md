@@ -1,8 +1,8 @@
 # Moments validation module (`psf_fomo.moments`)
 
 Measures PSF size and shape with several algorithms on native (undersampled) and oversampled
-images of simulated stars, and compares simulations star by star. Needs `ngmix` for `am`,
-`gauss` and `wmom` (`pip install -e ".[moments]"`).
+images of simulated stars, and compares simulations star by star. `am`, `gauss` and `wmom`
+use ngmix (installed with psf-fomo).
 
 ## Quick start
 

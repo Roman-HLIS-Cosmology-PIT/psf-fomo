@@ -9,7 +9,7 @@ import pytest
 
 import psf_fomo.models.gaussian_moments as gm_module
 from psf_fomo.models import GaussianMoments
-from psf_fomo.piffval.run import make_logger
+from psf_fomo.piff_simfit.run import make_logger
 
 PIX = galsim.roman.pixel_scale
 

@@ -115,8 +115,6 @@ def measure_star(star, algorithm, weight_fwhm=DEFAULT_WMOM_FWHM):
     """
     if algorithm not in ALGORITHMS:
         raise ValueError(f"algorithm must be one of {ALGORITHMS}")
-    if algorithm != "hsm":
-        require_ngmix()
     try:
         if algorithm == "wmom":
             values = star.wmom(weight_fwhm)
@@ -159,15 +157,6 @@ def upgrade_sizes(table):
         warnings.warn("table saved with sizes in native pixels; converted to arcsec "
                       f"(T in arcsec²): {names}")
     return mark_sizes(table)
-
-
-def require_ngmix():
-    """Raise a clear ImportError if ngmix (needed for am, gauss, wmom) is missing."""
-    try:
-        import ngmix  # noqa: F401
-    except ImportError as err:
-        raise ImportError("algorithms 'am', 'gauss' and 'wmom' need ngmix: "
-                          "pip install -e \".[moments]\" (or install ngmix)") from err
 
 
 def make_star(image, image_pos, weight=None, pointing=None):
