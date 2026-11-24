@@ -1,4 +1,4 @@
-"""Roman L2 images converted from ASDF to FITS (`psf_fomo.utils.convert_asdf`).
+"""Roman L2 images converted from ASDF to FITS (`psf_fomo.utils.convert_asdf_to_fits`).
 
 Layout (HDUs found by EXTNAME; see ``docs/piff_datafit.md``):
 

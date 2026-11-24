@@ -35,7 +35,7 @@ def plot_detections(exposure, catalog=None, stars=None, *, region=None, aperture
     Parameters
     ----------
     exposure : str or pathlib.Path
-        Converted FITS file (`convert_asdf` with ``uniform_weights=True``).
+        Converted FITS file (`convert_asdf_to_fits` with ``uniform_weights=True``).
     catalog : astropy.table.Table, optional
         Detections from `detect_sources` (blue).
     stars : astropy.table.Table, optional

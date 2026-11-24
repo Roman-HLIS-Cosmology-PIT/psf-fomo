@@ -45,7 +45,7 @@ same = load_data_fit("out/real01")
 
 ## Input files
 
-L2 images converted from ASDF to FITS with `psf_fomo.utils.convert_asdf` (see
+L2 images converted from ASDF to FITS with `psf_fomo.utils.convert_asdf_to_fits` (see
 [`utils.md`](utils.md)), one exposure of one SCA per file:
 
 | HDU | content |

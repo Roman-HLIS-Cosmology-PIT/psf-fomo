@@ -5,11 +5,11 @@ Adapted from a script by Mike Jarvis. The output is the L2 layout that
 
 Usage::
 
-    from psf_fomo.utils import convert_asdf, convert_to_dir
+    from psf_fomo.utils import convert_asdf_to_fits
 
-    convert_asdf("r0001_wfi01_f158_cal.asdf", "r0001_wfi01_f158_cal.fits",
-                 uniform_weights=True)
-    convert_to_dir("https://.../r0001_wfi01_f158_cal.asdf", "fits_out", uniform_weights=True)
+    convert_asdf_to_fits("r0001_wfi01_f158_cal.asdf", "fits_out", uniform_weights=True)
+    convert_asdf_to_fits("https://.../r0001_wfi01_f158_cal.asdf", "fits_out",
+                         name="exposure.fits", uniform_weights=True)
 
 Inputs can be local paths, URLs (``http://``, ``https://``, ``s3://``), an open
 ``asdf.AsdfFile`` or an open ``roman_datamodels`` model. A remote file is downloaded to a
@@ -81,17 +81,22 @@ COPIED_PLANES = [("data", "SCI"), ("dq", "DQ"), ("err", "ERR"), ("var_poisson", 
 WCS_TOLERANCE = 0.01  # pixels
 
 
-def convert_asdf(source, output, *, include_wcs=True, include_gain=False,
-                 background_weights=False, uniform_weights=False, mesh_size=128,
-                 overwrite=False, download_dir=None, verbose=True):
-    """Write one calibrated Roman image to FITS.
+def convert_asdf_to_fits(source, output_dir=".", *, name=None, include_wcs=True,
+                         include_gain=False, background_weights=False, uniform_weights=False,
+                         mesh_size=128, overwrite=False, download_dir=None, verbose=True):
+    """Convert one calibrated Roman image to FITS, in a folder.
 
     Parameters
     ----------
     source : str, pathlib.Path, asdf.AsdfFile or roman_datamodels model
         A ``*_cal.asdf`` path or URL, or an open product (used as is and left open).
-    output : str or pathlib.Path
-        Output FITS file. Its folder is created if needed.
+    output_dir : str or pathlib.Path
+        Output folder, created if needed (relative to the working directory; in Jupyter the
+        notebook's folder). Default ``'.'``.
+    name : str, optional
+        Output file name (its suffix becomes ``.fits``). Default: the input's name
+        (``*_cal.asdf`` → ``*_cal.fits``), from the path, URL or ``meta.filename`` of an open
+        product.
     include_wcs : bool
         Write the TAN-SIP WCS (checked to 0.01 pixel). Default True.
     include_gain : bool
@@ -114,15 +119,22 @@ def convert_asdf(source, output, *, include_wcs=True, include_gain=False,
     Returns
     -------
     pathlib.Path
-        The output path.
+        Absolute path of the FITS file.
+
+    Examples
+    --------
+    >>> for path in sorted(Path("asdf").glob("*_cal.asdf")):      # doctest: +SKIP
+    ...     convert_asdf_to_fits(path, "fits_out", uniform_weights=True)
     """
+    input_name = _product_name(source) if _is_open_product(source) else _source_name(source)
+    if name is None:
+        if input_name is None:
+            raise ValueError("this product has no meta.filename; pass name=...")
+        name = input_name
+    input_name = input_name or Path(name).with_suffix(".asdf").name
+    output = Path(output_dir) / Path(name).with_suffix(".fits").name
     background_weights = background_weights or uniform_weights
     include_gain = include_gain or background_weights
-    output = Path(output)
-    if _is_open_product(source):
-        input_name = _product_name(source) or output.with_suffix(".asdf").name
-    else:
-        input_name = _source_name(source)
     # Fail before a possibly large download if the output cannot be written.
     if output.exists() and not overwrite:
         raise FileExistsError(f"{output} exists; use overwrite=True")
@@ -171,41 +183,7 @@ def convert_asdf(source, output, *, include_wcs=True, include_gain=False,
         output.parent.mkdir(parents=True, exist_ok=True)
         with fits.HDUList(hdus) as hdul:
             hdul.writeto(output, overwrite=overwrite, checksum=True)
-    return output
-
-
-def convert_to_dir(source, output_dir=".", *, name=None, **kwargs):
-    """Convert into a folder, naming the FITS file after the input.
-
-    Parameters
-    ----------
-    source : str, pathlib.Path, asdf.AsdfFile or roman_datamodels model
-        Anything `convert_asdf` accepts.
-    output_dir : str or pathlib.Path
-        Output folder (relative to the working directory, in Jupyter the notebook's folder).
-        Default ``'.'``.
-    name : str, optional
-        File name to use (its suffix becomes ``.fits``). Default: from the path or URL, or
-        the ``meta.filename`` of an open product.
-    **kwargs
-        Passed to `convert_asdf` (e.g. ``uniform_weights=True``, ``overwrite=True``).
-
-    Returns
-    -------
-    pathlib.Path
-        Absolute path of the FITS file.
-
-    Examples
-    --------
-    >>> for path in sorted(Path("asdf").glob("*_cal.asdf")):      # doctest: +SKIP
-    ...     convert_to_dir(path, "fits_out", uniform_weights=True)
-    """
-    if name is None:
-        name = _product_name(source) if _is_open_product(source) else _source_name(source)
-        if name is None:
-            raise ValueError("this product has no meta.filename; pass name=...")
-    output = Path(output_dir) / Path(name).with_suffix(".fits").name
-    return convert_asdf(source, output, **kwargs).resolve()
+    return output.resolve()
 
 
 def _primary_header(meta, input_name):

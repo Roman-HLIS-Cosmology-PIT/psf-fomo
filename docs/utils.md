@@ -17,11 +17,12 @@ They are imported only when a function needs them, so `psf_fomo` works without t
 
 ```python
 from pathlib import Path
-from psf_fomo.utils import convert_to_dir, detect_sources, plot_detections, plot_detection_sizes
+from psf_fomo.utils import (convert_asdf_to_fits, detect_sources, plot_detections,
+                            plot_detection_sizes)
 from psf_fomo.piff_datafit import L2Image, StarCatalog
 
 asdf_file = "r0001_wfi01_f158_cal.asdf"
-fits_file = convert_to_dir(asdf_file, "fits_out", uniform_weights=True)
+fits_file = convert_asdf_to_fits(asdf_file, "fits_out", uniform_weights=True)
 
 catalog = detect_sources(fits_file, metadata=asdf_file)            # every detection
 stars = detect_sources(fits_file, gaia=True, metadata=asdf_file)   # Gaia matches only
@@ -36,18 +37,20 @@ Several files:
 
 ```python
 for path in sorted(Path("asdf").glob("*_cal.asdf")):
-    convert_to_dir(path, "fits_out", uniform_weights=True)
+    convert_asdf_to_fits(path, "fits_out", uniform_weights=True)
 ```
 
-## ASDF → FITS: `convert_asdf`, `convert_to_dir`
+## ASDF → FITS: `convert_asdf_to_fits`
 
-`convert_asdf(source, output, ...)` writes one file; `convert_to_dir(source, output_dir,
-name=None, ...)` names it after the input (`*_cal.asdf` → `*_cal.fits`). `source` is a
-local path, a URL (`http://`, `https://`, `s3://`), an open `asdf.AsdfFile` or an open
-`roman_datamodels` model.
+`convert_asdf_to_fits(source, output_dir=".", name=None, ...)` writes one FITS file into
+`output_dir` (created if needed) and returns its absolute path. The file is named after the
+input (`*_cal.asdf` → `*_cal.fits`) unless `name` is given. `source` is a local path, a URL
+(`http://`, `https://`, `s3://`), an open `asdf.AsdfFile` or an open `roman_datamodels`
+model (an open product without `meta.filename` needs `name`).
 
 | option | default | what |
 |---|---|---|
+| `name` | None | output file name (suffix becomes `.fits`); None = from the input |
 | `include_wcs` | True | TAN-SIP FITS WCS from the ASDF GWCS, checked to 0.01 pixel (`WCSERR`) |
 | `include_gain` | False | `GAIN` HDU (on with `background_weights`) |
 | `background_weights` | False | `IVAR` without the sources' Poisson noise, `SKYBKG` (needs sep; on with `uniform_weights`) |

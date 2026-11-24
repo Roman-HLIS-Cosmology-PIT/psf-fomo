@@ -15,7 +15,7 @@ First version shared with others.
   fits, reference optimum; synthetic L2 files from simulations
   (`psf_fomo.piff_datafit.synthetic`).
 - Helpers for real data (`psf_fomo.utils`, optional dependencies `pip install ".[utils]"`):
-  ASDF → FITS conversion (`convert_asdf`, `convert_to_dir`), SEP detection catalogs with
+  ASDF → FITS conversion (`convert_asdf_to_fits`), SEP detection catalogs with
   optional Gaia matching (`detect_sources`), and their plots (`plot_detections`,
   `plot_detection_sizes`).
 - Piff pinned to `main` at `280064f`.

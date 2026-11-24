@@ -1,6 +1,6 @@
 """SEP detection catalog of one converted Roman exposure, optionally only Gaia stars.
 
-The input is a FITS file written by `psf_fomo.utils.convert_asdf` with
+The input is a FITS file written by `psf_fomo.utils.convert_asdf_to_fits` with
 ``uniform_weights=True`` (HDUs ``SCI``, ``MASK``, ``SCI_UNIF``, ``MASK_UNIF``, ``IVAR_UNIF``).
 Detection and photometry run on the sky-subtracted ``SCI_UNIF``, with ``MASK_UNIF`` as bad
 pixels and the background-only ``IVAR_UNIF`` as the noise. The catalog has the columns
@@ -72,7 +72,7 @@ def detect_sources(exposure, *, gaia=False, gaia_catalog=None, metadata=None, ob
     Parameters
     ----------
     exposure : str, pathlib.Path or astropy.io.fits.HDUList
-        FITS file from `convert_asdf` with ``uniform_weights=True``.
+        FITS file from `convert_asdf_to_fits` with ``uniform_weights=True``.
     gaia : bool
         Cross-match with Gaia and return only the matched detections. Default False.
     gaia_catalog : str, pathlib.Path or astropy.table.Table, optional
@@ -157,7 +157,7 @@ def load_exposure(exposure, background_config=None):
     Parameters
     ----------
     exposure : str, pathlib.Path or astropy.io.fits.HDUList
-        FITS file from `convert_asdf` with ``uniform_weights=True``.
+        FITS file from `convert_asdf_to_fits` with ``uniform_weights=True``.
     background_config : dict, optional
         Overrides of `DEFAULT_BACKGROUND_CONFIG`, for re-deriving the sky as a check.
 
@@ -183,7 +183,7 @@ def load_exposure(exposure, background_config=None):
         missing = [name for name in REQUIRED_HDUS if name not in hdus]
         if missing:
             raise ValueError(f"missing extensions {missing}; convert with "
-                             "convert_asdf(..., uniform_weights=True)")
+                             "convert_asdf_to_fits(..., uniform_weights=True)")
         original = _native_float(hdus["SCI"].data)
         original_mask = np.ascontiguousarray(hdus["MASK"].data != 0)
         image = _native_float(hdus["SCI_UNIF"].data)
