@@ -9,7 +9,7 @@ this module adds the simulation catalog columns and the truth ratios:
 - ``flux_tot_r`` = ``flux_r`` × total flux of the unit model (e.g. optics ⊛ kernel + grid).
   It is the physically meaningful flux ratio when a component (PixelGrid in a Sum) carries
   net flux.
-- ``du, dv`` [arcsec], ``dx, dy`` [pix]: fitted centre relative to the catalog position. The
+- ``du, dv`` [arcsec], ``dx, dy`` [pix]: fitted center relative to the catalog position. The
   simulation places stars exactly at the catalog position, so these are centroid errors.
 - ``flag`` = 1 if Piff flagged (removed) the star, else 0.
 """
@@ -71,7 +71,7 @@ def summary(table, columns=("flux_r", "flux_tot_r", "dx", "dy", "chisq_dof")):
     table : astropy.table.Table
         A star table (with ``reserve`` and ``flag``).
     columns : sequence of str
-        Columns to summarise.
+        Columns to summarize.
 
     Returns
     -------

@@ -1,11 +1,11 @@
 """Reference optimum of a real-data fit (without truth).
 
 The joint χ² optimum of the *same* Piff model on the same stars, as for simulations
-(`psf_fomo.reference.ReferenceSolver`), to tell optimiser limits (Piff above the optimum of
+(`psf_fomo.reference.ReferenceSolver`), to tell optimizer limits (Piff above the optimum of
 its own model) from model limits (the optimum itself leaves χ² above the noise). Real data has
-no true positions, so the star centres are held at Piff's fitted centres by default; the
+no true positions, so the star centers are held at Piff's fitted centers by default; the
 reference χ² is then an upper bound on the optimum of Piff's problem (which also fits
-centres). ``centers='catalog'`` holds them at the detection-catalog positions instead (a
+centers). ``centers='catalog'`` holds them at the detection-catalog positions instead (a
 measurement, not the truth).
 
 The solution's star table, components and moments use the real-data versions (no truth):
@@ -26,7 +26,7 @@ from . import diagnostics
 
 
 class DataReferenceSolver(ReferenceSolver):
-    """`ReferenceSolver` for a real-data fit: Piff's fitted centres, data-only diagnostics.
+    """`ReferenceSolver` for a real-data fit: Piff's fitted centers, data-only diagnostics.
 
     Parameters
     ----------
@@ -39,9 +39,9 @@ class DataReferenceSolver(ReferenceSolver):
     freeze : sequence of str, optional
         Component kinds held at their given values (see `ReferenceSolver`).
     centers : {'fitted', 'catalog'}
-        Held centres: Piff's fitted ones (default) or the catalog positions.
+        Held centers: Piff's fitted ones (default) or the catalog positions.
 
-    Stars Piff left with a non-finite flux or centre (excluded from its fit) are left out here
+    Stars Piff left with a non-finite flux or center (excluded from its fit) are left out here
     too; ``n_excluded`` counts them.
     """
 
@@ -66,12 +66,12 @@ def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
                             refresh=None):
     """Reference optimum of the model of a `DataFitResult`, starting from Piff's solution.
 
-    The solver holds the stars' weights and centres fixed. With model Poisson weights they
+    The solver holds the stars' weights and centers fixed. With model Poisson weights they
     depend on the model, which Piff updates after every iteration (Poisson variance of the
-    current model, then a reflux of flux and centre). ``refresh`` rounds do the same at the
-    optimum and optimise again from it (iteratively reweighted least squares, the fixed point
+    current model, then a reflux of flux and center). ``refresh`` rounds do the same at the
+    optimum and optimize again from it (iteratively reweighted least squares, the fixed point
     Piff converges to). A Piff fit's stars already carry its last update, so the default is
-    no refresh for a fit and 2 for `DataFit.initialize` results (whose weights and centres
+    no refresh for a fit and 2 for `DataFit.initialize` results (whose weights and centers
     come from the initial model).
 
     Parameters
@@ -87,23 +87,23 @@ def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
         ``'same'`` (default): the fit's diagnostics settings (if it computed moments); a dict
         of `moment_residuals` settings; None: no moments.
     centers : {'fitted', 'catalog'}
-        Held centres. Default Piff's fitted ones.
+        Held centers. Default Piff's fitted ones.
     report : {'all', 'fit'}
         Stars drawn at the reported solutions: all (default) or only the fit stars (much
-        faster with a large reserve fraction; no reserve diagnostics). The optimisation
+        faster with a large reserve fraction; no reserve diagnostics). The optimization
         itself always draws only the fit stars.
     given : bool
-        Also report Piff's solution (``'given'``; for an initialised result, the initial
+        Also report Piff's solution (``'given'``; for an initialized result, the initial
         model). Default True.
     refresh : int or None
-        Rounds of weight and centre update at the optimum, each followed by a new
-        optimisation from it (`ReferenceSolver.reweighted_stars`). Default None: 2 for a
+        Rounds of weight and center update at the optimum, each followed by a new
+        optimization from it (`ReferenceSolver.reweighted_stars`). Default None: 2 for a
         `DataFit.initialize` result, 0 for a Piff fit.
 
     Returns
     -------
     dict
-        ``'given'`` (if ``given``): Piff's parameters with the held centres and profiled
+        ``'given'`` (if ``given``): Piff's parameters with the held centers and profiled
         fluxes, on the reference's χ² and dof (dof = weighted pixels − fit stars − free
         coefficients); ``'optimum'``: {start: `ReferenceResult`}, with ``converged`` False
         when scipy stopped at ``max_nfev`` (in the last round). With refresh rounds each
@@ -158,7 +158,7 @@ def reference_from_data_fit(result, freeze=(), starts=("given",), max_nfev=50,
 
 
 def round_summary(sol, previous_x):
-    """χ²/dof, optimiser status and coefficient change of one refresh round."""
+    """χ²/dof, optimizer status and coefficient change of one refresh round."""
     s = sol.summary
     max_dx = (None if previous_x is None or len(sol.x) == 0
               else float(abs(sol.x - previous_x).max()))

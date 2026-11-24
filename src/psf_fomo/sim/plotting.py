@@ -36,12 +36,13 @@ def plot_sca(sim, obs=0, sca=None, ax=None):
     ax.scatter(rows["x"], rows["y"], s=80, facecolors="none", edgecolors="r", lw=0.8)
     ax.set_xlabel("x [pix]")
     ax.set_ylabel("y [pix]")
-    ax.set_title(f"obs {obs}, SCA {sca} [ADU, asinh]")
+    ax.set_title(f"obs {obs}, SCA {sca} [ADU]")
+    ax.grid(False)          # an image: no grid lines, also under a style that turns them on
     return ax
 
 
 def plot_stamps(sim, obs=0, sca=None, n_max=16):
-    """Gallery of star stamps (asinh stretch), labelled with star id and magnitude.
+    """Gallery of star stamps (asinh stretch), labeled with star id and magnitude.
 
     Parameters
     ----------

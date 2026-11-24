@@ -40,7 +40,7 @@ def test_file_config_simple_wcs():
 def test_file_config_roman_wcs_and_gain():
     sim = RomanSimulation(scas=[5])
     sim.set_wcs("roman", ra=30.0, dec=-40.0)
-    sim.set_noise("roman")
+    sim.set_noise("roman-L2")
     inp = file_config(sim, sca=5)["input"]
     assert inp["cat_hdu"] == 1 and inp["ra_col"] == "ra" and "x_col" not in inp
     assert inp["ra"] == pytest.approx(2.0) and inp["dec"] == -40.0  # Piff: RA in hours

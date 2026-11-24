@@ -168,7 +168,7 @@ def test_fit_noise_model_and_positions(basic_fit):
     # unclean ids 3, 7, 11 rejected; the rest fitted or reserve
     assert not set(t["star_id"]) & {3, 7, 11} and len(t) == 47
     assert int(t["reserve"].sum()) == int(0.2 * 47)
-    # The 0-based catalog was shifted correctly: fitted centres ≈ catalog positions.
+    # The 0-based catalog was shifted correctly: fitted centers ≈ catalog positions.
     assert abs(np.median(t["dx"])) < 0.05 and abs(np.median(t["dy"])) < 0.05
     assert abs(np.median(t["sky_resid"])) < 0.02  # SKYBKG subtracted
     np.testing.assert_allclose(np.median(t["flux_cat_r"]), 1 / 0.95, rtol=0.02)
@@ -196,7 +196,7 @@ def test_moments_components_plots(basic_fit):
         assert fig is not None
 
 
-def test_wrong_pixel_convention_shows_in_centres(stars_only, tmp_path):
+def test_wrong_pixel_convention_shows_in_centers(stars_only, tmp_path):
     # Treating the 0-based SEP positions as 1-based puts every stamp 1 pixel off: Piff's
     # centroid fit then finds the stars at +1 pixel in x and y.
     image, catalog, _ = stars_only
@@ -306,8 +306,8 @@ def test_sizemag_picks_the_stars(stars_and_galaxies, tmp_path):
     assert purity > 0.9 and completeness > 0.5, (purity, completeness)
 
 
-def test_min_sep_counts_galaxies_as_neighbours(stars_and_galaxies, tmp_path):
-    # Stars are chosen by a column; the galaxies are not candidates but still neighbours.
+def test_min_sep_counts_galaxies_as_neighbors(stars_and_galaxies, tmp_path):
+    # Stars are chosen by a column; the galaxies are not candidates but still neighbors.
     image, catalog, objects = stars_and_galaxies
     cat = StarCatalog(catalog)
     cat.select_stars("column", column="is_star", use_flag=1)

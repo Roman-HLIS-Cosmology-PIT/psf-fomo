@@ -42,7 +42,7 @@ def test_columns_and_magnitudes(measured, mixed):
             assert f"{key}_{label}" in t.colnames
     assert {"id", "x", "y", "flux_cat", "mag", "size_cat", "clean", "candidate",
             "star"} <= set(t.colnames)
-    assert str(t["T_gauss"].unit) == "pix2"
+    assert str(t["T_gauss"].unit) == "arcsec2" and str(t["sigma_gauss"].unit) == "arcsec"
     np.testing.assert_allclose(t["mag"], ABZP - 2.5 * np.log10(t["flux_cat"]))
     ok = t["flux_gauss"] > 0
     np.testing.assert_allclose(t["mag_gauss"][ok], ABZP - 2.5 * np.log10(t["flux_gauss"][ok]))

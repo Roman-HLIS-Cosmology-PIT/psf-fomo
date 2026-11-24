@@ -29,7 +29,7 @@ from ..io import provenance, read_yaml, write_yaml
 from ..sim import Simulation, load_simulation
 from . import plotting
 from .measure import (ALGORITHMS, DEFAULT_WMOM_FWHM, algorithm_label, make_star,
-                      measure_star, require_ngmix)
+                      mark_sizes, measure_star, require_ngmix, upgrade_sizes)
 
 IMAGE_TYPES = ("noisy", "noiseless", "oversampled")
 STAR_KEYS = ["obs", "sca", "star_id"]
@@ -163,7 +163,8 @@ class MomentsValidation:
             require_ngmix()  # fail before any rendering, not star by star
         tables = [self._measure_simulation(name, sim)
                   for name, sim in self.simulations.items()]
-        result = MomentsResult(vstack(tables), copy.deepcopy(self.config), provenance())
+        result = MomentsResult(mark_sizes(vstack(tables)), copy.deepcopy(self.config),
+                               provenance())
         if save_to is not None:
             result.save(save_to)
         return result
@@ -228,8 +229,8 @@ class MomentsResult:
         One row per simulation × star × image type × algorithm. Columns: ``sim``, ``obs``,
         ``sca``, ``star_id``, ``x``, ``y`` (pix), ``phase_x``, ``phase_y`` (pix), ``mag``
         (AB), ``snr`` (√(Σ I²/σ²) of the noiseless native stamp), ``image``, ``algorithm``,
-        ``flux``, ``du``, ``dv`` (arcsec), ``sigma`` (native pix), ``T`` (native pix²,
-        trace), ``e1``, ``e2``, ``g1``, ``g2``, ``flag`` (see `measure.measure_star`).
+        ``flux``, ``du``, ``dv`` (arcsec), ``sigma`` (arcsec), ``T`` (arcsec², trace),
+        ``e1``, ``e2``, ``g1``, ``g2``, ``flag`` (see `measure.measure_star`).
     config : dict
         The `MomentsValidation` configuration.
     provenance : dict
@@ -388,7 +389,7 @@ def load_moments(path):
     """Load a `MomentsResult` saved with `MomentsResult.save` (or ``run(save_to=...)``)."""
     path = Path(path)
     saved = read_yaml(path / "config.yaml")
-    table = Table.read(path / "moments.fits")
+    table = upgrade_sizes(Table.read(path / "moments.fits"))
     return MomentsResult(table, saved["config"], saved["provenance"])
 
 

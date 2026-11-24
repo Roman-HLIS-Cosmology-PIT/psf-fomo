@@ -25,8 +25,8 @@ def test_grid_positions_count_and_random_phases():
 
 def test_single_grid_star_is_central():
     x, y = draw_positions(1, "grid", np.random.default_rng(3), margin=33)
-    centre = (1 + galsim.roman.n_pix) / 2
-    assert abs(x[0] - centre) < 1 and abs(y[0] - centre) < 1
+    center = (1 + galsim.roman.n_pix) / 2
+    assert abs(x[0] - center) < 1 and abs(y[0] - center) < 1
 
 
 def test_fixed_phase():
@@ -50,7 +50,7 @@ def test_magnitudes():
 
 
 def test_mag_to_flux_matches_galsim_sed_route():
-    # Independent route: a flat-fnu SED normalised to the magnitude, its photon flux through
+    # Independent route: a flat-fnu SED normalized to the magnitude, its photon flux through
     # the bandpass, times area and exposure time (as in GalSim's Roman demo).
     bandpass = galsim.roman.getBandpasses(AB_zeropoint=True)["H158"]
     sed = galsim.SED("1", wave_type="nm", flux_type="fnu").withMagnitude(18.0, bandpass)

@@ -1,12 +1,12 @@
 """Detection catalogs and star selection for real-data fits (`StarCatalog`).
 
 A SEP detection catalog (FITS table, HDU 1): ``id`` (1…N), ``x``, ``y`` (0-based:
-the first pixel centre is (0, 0)), ``ra_deg``, ``dec_deg``, ``flux_auto`` [DN/s] (the flux to
+the first pixel center is (0, 0)), ``ra_deg``, ``dec_deg``, ``flux_auto`` [DN/s] (the flux to
 use), ``flux_auto_err_bkg``, ``snr_auto_bkg``, ``r50`` [pix], shape columns, flags and the
 boolean ``clean``; header ``SKY``, ``DETCFG``, ``MATCHRAD``, ``OBSTIME``, ``NMATCH``, ``ABZP``.
 
 All detections are given to Piff as input objects, so that Piff's ``min_sep`` sees every
-neighbour (galaxies and unclean objects included). Which objects are stars is a Piff
+neighbor (galaxies and unclean objects included). Which objects are stars is a Piff
 ``select`` step on top:
 
 - ``'sizemag'`` (default): Piff's ``SizeMag`` star finder (stellar locus in size vs
@@ -57,7 +57,7 @@ class StarCatalog:
     id_col, x_col, y_col : str
         Unique object id and pixel positions. Defaults ``'id'``, ``'x'``, ``'y'``.
     zero_based : bool
-        Positions in numpy convention (first pixel centre (0, 0)), as SEP writes them. Default
+        Positions in numpy convention (first pixel center (0, 0)), as SEP writes them. Default
         True; they are shifted by +1 to GalSim / Piff's convention when the Piff catalog is
         written.
     flux_col : str or None
@@ -247,7 +247,7 @@ class StarCatalog:
         out.update(select_config(self.cuts, extra_reject=clean))
         return out
 
-    def piff_table(self, image=None, stamp_size=25, fit_frame=True):
+    def piff_table(self, image=None, stamp_size=25):
         """The catalog as Piff reads it.
 
         Columns: ``x``, ``y`` (GalSim / Piff convention, 1-based), ``id``, and when available
@@ -257,19 +257,12 @@ class StarCatalog:
         e⁻ per DN/s; where undefined, the image median). Rows with non-finite positions are
         dropped.
 
-        With an `L2Image` whose frame needs a flip (real L2 files, ``frame='science'``) and
-        ``fit_frame``, ``x``, ``y`` are in the fit (GalSim) frame, matching the flipped
-        working copy, and ``x_l2``, ``y_l2`` keep the positions in the file (1-based).
-
         Parameters
         ----------
         image : L2Image, optional
-            Needed for the ``gain`` column and the frame.
+            Needed for the ``gain`` column.
         stamp_size : int
             Stamp size for the gain median, pixels. Default 25.
-        fit_frame : bool
-            Positions in the fit frame (default; for `DataFit`). False: in the file's own frame
-            (for measurements on the original file).
 
         Returns
         -------
@@ -297,14 +290,10 @@ class StarCatalog:
             if name not in out.colnames:
                 out[name] = np.asarray(t[name])[keep]
         if image is not None and image.weights == "model_poisson":
-            # The gain plane is read from the original file: positions in its own frame.
             gain = image.gain_at(out["x"], out["y"], stamp_size)
             valid = image.array("gain")
             fallback = float(np.median(valid[np.isfinite(valid) & (valid > 0)]))
             out["gain"] = np.where(np.isfinite(gain), gain, fallback)
-        if image is not None and fit_frame and image.flip is not None:
-            out["x_l2"], out["y_l2"] = out["x"].copy(), out["y"].copy()
-            out["x"], out["y"] = image.to_fit_frame(out["x_l2"], out["y_l2"])
         return out
 
     def measure(self, image, algorithms=("gauss",), wmom_fwhm=(0.4,), stamp_size=25,
@@ -312,7 +301,7 @@ class StarCatalog:
         """Moments of every detection on ``image``, before any fit (one row per detection).
 
         See `psf_fomo.datafit.measure.measure_objects` for the parameters and columns
-        (``T_<alg>`` [pix²], ``sigma_<alg>``, ``e1_<alg>``, ``e2_<alg>``, ``flux_<alg>``,
+        (``T_<alg>`` [arcsec²], ``sigma_<alg>`` [arcsec], ``e1_<alg>``, ``e2_<alg>``, ``flux_<alg>``,
         ``mag_<alg>``, ``flag_<alg>``; ``candidate`` / ``star`` with ``preview_selection``).
 
         Example
@@ -325,8 +314,7 @@ class StarCatalog:
                                max_objects, preview_selection, verbose)
 
     def property_cols(self, table):
-        """Columns of `piff_table` that Piff should carry as star properties (incl. ``x_l2``,
-        ``y_l2`` when present)."""
+        """Columns of `piff_table` that Piff should carry as star properties."""
         return [name for name in table.colnames if name not in ("x", "y", "gain")]
 
     def config(self):

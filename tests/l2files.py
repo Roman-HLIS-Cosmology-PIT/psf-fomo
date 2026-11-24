@@ -1,22 +1,22 @@
 """Test helper: small fields of stars and galaxies written in the L2 layout.
 
 The file writers are the package's (`psf_fomo.datafit.synthetic`); this module adds the
-analytic test scenes (Gaussian PSF, sheared exponential galaxies) and opens test files, which
-are written in GalSim's frame.
+analytic test scenes (Gaussian PSF, sheared exponential galaxies) and opens test files. Like
+real L2 files and galsim.roman's WCS, they are in Roman's science frame.
 """
 import numpy as np
 import galsim
 import galsim.roman
 
-from psf_fomo.datafit.synthetic import to_science_frame, write_l2_file  # noqa: F401
+from psf_fomo.datafit.synthetic import write_l2_file  # noqa: F401
 from psf_fomo.datafit.synthetic import write_sep_catalog as sep_catalog
 from psf_fomo.sim.wcs import DEFAULT_DEC, DEFAULT_RA
 
 
 def open_l2(path, **kwargs):
-    """`L2Image` of a test file: these are written in GalSim's frame (``frame='galsim'``)."""
+    """`L2Image` of a test file."""
     from psf_fomo.datafit import L2Image
-    return L2Image(path, frame="galsim", **kwargs)
+    return L2Image(path, **kwargs)
 
 
 def roman_wcs(sca=5, pa_deg=0.0):
@@ -26,11 +26,11 @@ def roman_wcs(sca=5, pa_deg=0.0):
                                SCAs=[sca])[sca]
 
 
-def mirrored_wcs(wcs, centre):
-    """A TAN WCS equal to ``wcs`` at ``centre`` but with the x axis mirrored."""
-    j = wcs.local(centre).jacobian().getMatrix()
-    affine = galsim.AffineTransform(-j[0, 0], j[0, 1], -j[1, 0], j[1, 1], origin=centre)
-    return galsim.TanWCS(affine, world_origin=wcs.toWorld(centre))
+def mirrored_wcs(wcs, center):
+    """A TAN WCS equal to ``wcs`` at ``center`` but with the x axis mirrored."""
+    j = wcs.local(center).jacobian().getMatrix()
+    affine = galsim.AffineTransform(-j[0, 0], j[0, 1], -j[1, 0], j[1, 1], origin=center)
+    return galsim.TanWCS(affine, world_origin=wcs.toWorld(center))
 
 
 def scene(wcs, shape=(256, 256), stars=(), sky=2.0, read_var=0.01, gain=250.0, seed=0,
@@ -78,7 +78,7 @@ def field(n_stars=60, n_gals=60, shape=(700, 700), margin=25, min_dist=30.0, see
     """Random stars (the test PSF) and galaxies (sheared exponentials ⊛ PSF), well separated.
 
     ``min_dist`` (pixels) must exceed a stamp's half-diagonal plus the PSF wings: a 25-pixel
-    stamp reaches 17 pixels from its centre at the corners, so an object 18 pixels away on
+    stamp reaches 17 pixels from its center at the corners, so an object 18 pixels away on
     the diagonal puts light into the corner pixels that no single-star model can fit.
 
     Returns a list of dicts: ``id`` (1…N), ``x``, ``y`` (1-based), ``flux`` [DN/s],

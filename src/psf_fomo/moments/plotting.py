@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 QUANTITIES = ("dT_T", "de1", "de2")
 LABELS = {"dT_T": "dT/T", "de1": "de1", "de2": "de2"}
 MARKERS = {"noisy": "o", "noiseless": "s", "oversampled": "^"}
+ALGORITHM_COLORS = ["royalblue", "darkorange", "mediumseagreen", "goldenrod", "hotpink",
+                    "slateblue", "crimson", "green"]
 
 
 def plot_bias(result, sim=None, images=None, algorithms=None):
@@ -81,7 +83,7 @@ def plot_recovery(result, injected="hsm_os", reference=None, images=None, algori
     summary = _keep(summary, "image", images)
     summary = _keep(summary, "algorithm", algorithms)
     algorithms = list(dict.fromkeys(summary["algorithm"]))
-    colors = {a: f"C{i}" for i, a in enumerate(algorithms)}
+    colors = {a: ALGORITHM_COLORS[i % len(ALGORITHM_COLORS)] for i, a in enumerate(algorithms)}
     fig, axes = plt.subplots(1, 3, figsize=(13, 4))
     for ax, q in zip(axes, QUANTITIES):
         xs = summary[f"{q}_{injected}_mean"]
@@ -206,7 +208,7 @@ def _keep(table, column, values):
 
 
 def _binned(x, y, edges):
-    """Bin centres (mean x), mean y and error on the mean per bin; bins with < 2 points skipped."""
+    """Bin centers (mean x), mean y and error on the mean per bin; bins with < 2 points skipped."""
     good = np.isfinite(y)
     x, y = x[good], y[good]
     idx = np.clip(np.digitize(x, edges) - 1, 0, len(edges) - 2)

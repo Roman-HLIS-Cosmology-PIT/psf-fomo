@@ -6,7 +6,7 @@ the moment algorithms, and optionally a preview of Piff's star selection.
 The stamps are the ones a fit would use: Piff's own Input cuts them (same stamp size, sky
 subtraction, weights and bad pixels) from a temporary copy of the Piff catalog. Each stamp is
 measured with `psf_fomo.moments.measure.measure_star` about the catalog position (conventions
-of `psf_fomo.moments`: T = Mxx + Myy in native pix², σ = det(M)^¼ in pix, distortion e, world
+of `psf_fomo.moments`: T = Mxx + Myy in arcsec², σ = det(M)^¼ in arcsec, distortion e, world
 axes; flags 1 failure, 2 negative flux, 4 centroid > 1″, 8 exception).
 
 Algorithms: ``gauss`` fits an elliptical Gaussian; ``wmom`` reports raw moments with a fixed
@@ -22,7 +22,8 @@ import numpy as np
 import piff
 from astropy.table import Table
 
-from ..moments.measure import ALGORITHMS, DEFAULT_WMOM_FWHM, algorithm_label, measure_star
+from ..moments.measure import (ALGORITHMS, DEFAULT_WMOM_FWHM, SIZE_UNITS, algorithm_label,
+                               measure_star)
 from ..piffval.fitting import make_logger, piff_shape_method
 from .catalog import PIFF_ID
 
@@ -54,7 +55,7 @@ def measure_objects(image, catalog, algorithms=("gauss",), wmom_fwhm=(DEFAULT_WM
     preview_selection : bool
         Also run the catalog's Piff selection (selection type, then the cuts; no reserve, no
         fit) and add ``candidate`` and ``star`` columns. With ``mag_range`` / ``max_objects``
-        the selection sees only that subset (fewer neighbours for ``min_sep``, a different
+        the selection sees only that subset (fewer neighbors for ``min_sep``, a different
         size–magnitude locus for SizeMag). Default False.
     verbose : int
         Piff log level, 0 (errors only) … 3.
@@ -65,7 +66,7 @@ def measure_objects(image, catalog, algorithms=("gauss",), wmom_fwhm=(DEFAULT_WM
         One row per detection that got a stamp (inside the image, not fully masked):
         ``id``, catalog columns ``x``, ``y`` (1-based), ``flux_cat`` [DN/s], ``mag``,
         ``size_cat`` [pix], ``clean`` (those available), and per algorithm label ``<a>``
-        (e.g. ``gauss``, ``wmom_0.4``): ``T_<a>`` [pix²], ``sigma_<a>`` [pix], ``e1_<a>``,
+        (e.g. ``gauss``, ``wmom_0.4``): ``T_<a>`` [arcsec²], ``sigma_<a>`` [arcsec], ``e1_<a>``,
         ``e2_<a>``, ``flux_<a>`` [DN/s], ``mag_<a>`` (``ABZP`` − 2.5 log10 ``flux_<a>``;
         instrumental −2.5 log10 without ``ABZP``; NaN for flux ≤ 0), ``flag_<a>``; with
         ``preview_selection`` also ``candidate`` and ``star``. ``meta`` holds the settings
@@ -85,9 +86,7 @@ def measure_objects(image, catalog, algorithms=("gauss",), wmom_fwhm=(DEFAULT_WM
         raise ValueError(f"algorithms {unknown} not in {ALGORITHMS}")
     labels = [(a, f) for a in algorithms
               for f in ([float(w) for w in np.atleast_1d(wmom_fwhm)] if a == "wmom" else [None])]
-    # The original file in its own frame: moments use only the local WCS (world axes), so the
-    # pixel frame does not matter here, and x, y stay those of the L2 file.
-    piff_catalog = _subset(catalog.piff_table(image, stamp_size, fit_frame=False), mag_range,
+    piff_catalog = _subset(catalog.piff_table(image, stamp_size), mag_range,
                            max_objects)
     logger, _ = make_logger(verbose)
     with tempfile.TemporaryDirectory() as tmp:
@@ -182,6 +181,6 @@ def _join(piff_catalog, objects, rows, labels, abzp):
         with np.errstate(divide="ignore", invalid="ignore"):
             out[f"mag_{label}"] = np.where(flux > 0, zero - 2.5 * np.log10(flux), np.nan)
         out[f"flag_{label}"] = np.array([r[f"flag_{label}"] for r in rows], dtype=int)
-        out[f"T_{label}"].unit = "pix2"
-        out[f"sigma_{label}"].unit = "pix"
+        out[f"T_{label}"].unit = SIZE_UNITS["T"]
+        out[f"sigma_{label}"].unit = SIZE_UNITS["sigma"]
     return out

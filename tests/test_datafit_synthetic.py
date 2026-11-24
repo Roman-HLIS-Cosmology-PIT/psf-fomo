@@ -37,24 +37,21 @@ def test_temporary_folder_is_removed(sim, tmp_path):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("frame", ["science", "galsim"])
-def test_stars_land_on_catalog_positions(sim, frame):
-    synth = simulation_to_l2(sim, sca=5, frame=frame, sky=0.6)
+def test_stars_land_on_catalog_positions(sim):
+    synth = simulation_to_l2(sim, sca=5, sky=0.6)
     image_file, catalog_file = synth.image_file, synth.catalog_file
-    img = L2Image(image_file, frame=frame)
+    img = L2Image(image_file)
     assert img.sca == 5 and img.sky == pytest.approx(0.6)
-    assert img.check_orientation()["parity_ok"]   # the fit frame is GalSim's in both cases
+    assert img.check_orientation()["parity_ok"]   # galsim.roman's WCS: the science frame
     cat = Table.read(catalog_file)
     truth = sim.catalogs[0]
     # Catalog fluxes are the true fluxes in DN/s.
     np.testing.assert_allclose(cat["flux_auto"],
                                truth["flux"] / galsim.roman.gain / galsim.roman.exptime)
-    # Each catalog position (0-based, file frame) maps back to the simulated position.
-    x, y = img.to_fit_frame(np.asarray(cat["x"]) + 1, np.asarray(cat["y"]) + 1)
-    np.testing.assert_allclose(x, truth["x"], atol=1e-9)
-    np.testing.assert_allclose(y, truth["y"], atol=1e-9)
-    # In the file's own frame, the brightest pixel near each catalog position is within one
-    # pixel of it.
+    # Each catalog position (0-based) is the simulated position (1-based).
+    np.testing.assert_allclose(np.asarray(cat["x"]) + 1, truth["x"], atol=1e-9)
+    np.testing.assert_allclose(np.asarray(cat["y"]) + 1, truth["y"], atol=1e-9)
+    # The brightest pixel near each catalog position is within one pixel of it.
     data = img.array("image")
     for xi, yi in zip(cat["x"], cat["y"]):          # 0-based array indices
         ix, iy = int(round(xi)), int(round(yi))

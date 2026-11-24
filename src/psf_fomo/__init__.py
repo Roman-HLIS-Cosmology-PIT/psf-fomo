@@ -1,4 +1,4 @@
-"""psf-fomo: Roman WFI PSF modelling test bench.
+"""psf-fomo: Roman WFI PSF modeling test bench.
 
 - ``psf_fomo.sim``: simulated Roman star images with known truth and controlled PSF errors.
 - ``psf_fomo.moments``: PSF size/shape measurements on native and oversampled images.

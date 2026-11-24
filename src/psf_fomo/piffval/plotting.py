@@ -5,6 +5,7 @@ Piff are always left out.
 """
 import numpy as np
 import matplotlib.pyplot as plt
+import galsim.roman
 
 from .components import component_image, kind_of, leaf_psfs
 from .residuals import draw_model_oversampled, fit_sed
@@ -14,7 +15,7 @@ LABELS = {"dT_T": "dT/T", "de1": "de1", "de2": "de2"}
 
 
 def mean_images(psf, stars):
-    """Flux-normalised mean data, model and residual (data − model) stamps.
+    """Flux-normalized mean data, model and residual (data − model) stamps.
 
     All stamps must have the same size. Returns a dict of 2-d arrays (``data``, ``model``,
     ``resid``), each the mean of image / fitted flux.
@@ -45,7 +46,7 @@ def mean_oversampled(psf, stars, rows, sim, oversample=5):
 def chi2_by_radius(psf, stars, bin_width=1.0):
     """Mean χ² per pixel in annuli around the star position (native pixels).
 
-    Returns (radius bin centres [pix], mean χ² per pixel, number of pixels per bin).
+    Returns (radius bin centers [pix], mean χ² per pixel, number of pixels per bin).
     """
     r_all, c_all = [], []
     for star in stars:
@@ -188,11 +189,14 @@ def plot_field(result, column, comparison=None, algorithm=None, which="all", ax=
     return ax.figure
 
 
-def plot_components(result, kind="pixelgrid", n_grid=3, oversample=5, size=9):
+def plot_components(result, kind="pixelgrid", n_grid=3, oversample=5, size=9,
+                    include_pixel=True):
     """Images of one component (``'pixelgrid'``, ``'kernel'``, ``'optics'``, ``'mtf'``) at
     an n_grid × n_grid set of SCA positions.
 
-    Optics, kernel and MTF are drawn pre-pixel; a PixelGrid includes the pixel.
+    Drawn on a grid ``oversample`` times finer than the native pixels, convolved with the
+    native pixel response (``include_pixel=True``, default) or before it (False); a
+    PixelGrid always contains it. See `components.component_image`.
     """
     leaves = [leaf for leaf in leaf_psfs(result.psf) if kind_of(leaf) == kind]
     if not leaves:
@@ -203,7 +207,8 @@ def plot_components(result, kind="pixelgrid", n_grid=3, oversample=5, size=9):
     fig, axes = plt.subplots(n_grid, n_grid, figsize=(2.6 * n_grid, 2.6 * n_grid),
                              squeeze=False)
     sed_eff = fit_sed(result.psf, getattr(result, "_stars", None) or [])  # chromatic optics
-    images = [[component_image(result.psf, leaf, x, y, sca, oversample, size, sed_eff).array
+    images = [[component_image(result.psf, leaf, x, y, sca, oversample, size, sed_eff,
+                               include_pixel).array
                for x in pos] for y in pos]
     lim = max(np.abs(im).max() for row in images for im in row)
     signed = min(im.min() for row in images for im in row) < 0
@@ -215,7 +220,72 @@ def plot_components(result, kind="pixelgrid", n_grid=3, oversample=5, size=9):
             ax.set_title(f"({x:.0f}, {y:.0f})", fontsize=8)
             ax.set_xticks([])
             ax.set_yticks([])
-    fig.suptitle(f"{kind} component, ×{oversample} grid, {size} native pix")
+    pixel = "with" if include_pixel or kind == "pixelgrid" else "without"
+    fig.suptitle(f"{kind} component, ×{oversample} grid, {size} native pix, {pixel} pixel")
+    fig.tight_layout()
+    return fig
+
+
+def component_title(leaf):
+    """Display name of a model component: Piff's model name (RomanOptics for the optics)."""
+    kind = kind_of(leaf)
+    if kind == "optics":
+        return "RomanOptics"
+    if kind == "mtf":
+        return "MTF (GaussianMixture)"
+    return leaf.model._type_name
+
+
+def plot_component_images(result, x=None, y=None, size=9, oversample=5, include_pixel=True):
+    """Every component of the model alone at one SCA position: native and oversampled.
+
+    One column per component (in the model's order); top row on the native pixels, bottom
+    row on a grid ``oversample`` times finer. Each image has unit flux (a PixelGrid: its own
+    flux in the model) and its own color scale, starting at 0; a PixelGrid, which can be
+    negative, uses a diverging scale around 0.
+
+    Parameters
+    ----------
+    result : FitResult or DataFitResult
+    x, y : float, optional
+        Position in native pixels. Default: the SCA center (2044.5, 2044.5).
+    size : int
+        Image size in native pixels. Default 9.
+    oversample : int
+        Refinement of the bottom row. Default 5.
+    include_pixel : bool
+        Convolve each component with the native pixel response (True, default: what it
+        contributes to the effective PSF) or not (False); a PixelGrid always contains it.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    center = (galsim.roman.n_pix + 1) / 2
+    x = center if x is None else float(x)
+    y = center if y is None else float(y)
+    sca = result.config["sca"]
+    leaves = leaf_psfs(result.psf)
+    sed_eff = fit_sed(result.psf, getattr(result, "_stars", None) or [])  # chromatic optics
+    fig, axes = plt.subplots(2, len(leaves), figsize=(3.6 * len(leaves), 6.6), squeeze=False)
+    for col, leaf in enumerate(leaves):
+        for row, (os_, grid) in enumerate(((1, "native"), (oversample, f"×{oversample}"))):
+            image = component_image(result.psf, leaf, x, y, sca, os_, size, sed_eff,
+                                    include_pixel).array
+            ax = axes[row, col]
+            if kind_of(leaf) == "pixelgrid":
+                lim = np.abs(image).max()
+                im = ax.imshow(image, origin="lower", cmap="RdBu_r", vmin=-lim, vmax=lim)
+            else:
+                im = ax.imshow(image, origin="lower", cmap="viridis", vmin=0)
+            fig.colorbar(im, ax=ax, shrink=0.8)
+            ax.set_title(f"{component_title(leaf)}, {grid}")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.grid(False)
+    pixel = "with" if include_pixel else "without"
+    fig.suptitle(f"model components at ({x:.1f}, {y:.1f}), {size} native pix, {pixel} the "
+                 "pixel response (a PixelGrid always has it)")
     fig.tight_layout()
     return fig
 

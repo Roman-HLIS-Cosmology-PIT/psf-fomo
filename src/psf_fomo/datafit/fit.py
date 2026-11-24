@@ -47,7 +47,7 @@ from astropy.table import Table
 
 from .. import models  # noqa: F401  (registers our Piff models before any config is parsed)
 from ..io import provenance, read_yaml, write_yaml
-from ..moments.measure import DEFAULT_WMOM_FWHM
+from ..moments.measure import DEFAULT_WMOM_FWHM, upgrade_sizes
 from ..piffval import plotting
 from ..piffval.components import components as component_tables, leaf_psfs
 from ..piffval.config import FitConfig, needs_star_seds
@@ -103,8 +103,9 @@ class DataFit:
     def set_sed(self, sed="flat", wave_type="nm", flux_type="fphotons"):
         """The SED given to every star, used by a chromatic RomanOptics model.
 
-        Piff's RomanOptics is chromatic by default, and then needs an SED for each star.
-        Real stars have none in the catalog, so one SED is assumed for all of them.
+        A chromatic RomanOptics (``FitConfig.set_optics(chromatic=True)``; the default is
+        monochromatic) needs an SED for each star. Real stars have none in the catalog, so one
+        SED is assumed for all of them.
 
         Parameters
         ----------
@@ -245,8 +246,8 @@ class DataFit:
         piff_catalog : astropy.table.Table
             That catalog (`StarCatalog.piff_table`), for its column names.
         image_file : str or Path, optional
-            The image file Piff reads (default the image's own; `run` passes the working copy
-            in GalSim's frame).
+            The image file Piff reads (default the image's own; `run` passes the cleaned
+            working copy when there is one).
 
         Returns
         -------
@@ -263,7 +264,7 @@ class DataFit:
             add_attitude(psf, attitude)
         if needs_star_seds(psf):
             if self.sed is None:
-                raise ValueError("the Piff model is chromatic (RomanOptics, Piff's default) "
+                raise ValueError("the Piff model is chromatic (RomanOptics, chromatic=True) "
                                  "and needs an SED for the stars: set_sed('flat' | file | "
                                  "galsim.SED), or FitConfig.set_optics(..., chromatic=False)")
             # 'flat' / 'table': sed.fits, written next to the catalog by `run`.
@@ -289,8 +290,8 @@ class DataFit:
         ----------
         save_to : str or Path, optional
             Output folder (Piff reads the catalog from it): ``catalog.fits``, ``piff.yaml``,
-            ``image_galsim_frame.fits`` (the image flipped into GalSim's frame, for
-            ``frame='science'`` files; the original is not changed), ``detections.fits``
+            ``image_cleaned.fits`` (only if the image has non-finite pixels: a copy with them
+            cleaned; the original is not changed), ``detections.fits``
             (only for a catalog given as a table: the full table), and the result files (see
             `DataFitResult.save`); reload with `load_data_fit`. Default None: nothing is kept
             on disk (Piff's inputs go to a temporary folder, removed after the fit). The
@@ -333,7 +334,7 @@ class DataFit:
         return result
 
     def initialize(self, save_to=None):
-        """Piff's initialisation only, no fit: the start of a reference optimum without a
+        """Piff's initialization only, no fit: the start of a reference optimum without a
         Piff run (``res.reference(starts=('zero',), given=False, refresh=...)``). Experimental.
 
         The same steps as `run` up to the fit (checks, working copy, catalog, Piff's Input and
@@ -341,9 +342,9 @@ class DataFit:
         (``initialize_flux_center``, ``initialize_params``, one reflux), followed by the
         Poisson update of its iterations: with model Poisson weights (a ``gain`` per star),
         the variance of the current model (fitted flux) is added to the background weights
-        (``Star.addPoisson``) and the stars are refluxed (flux and centre) with those weights.
+        (``Star.addPoisson``) and the stars are refluxed (flux and center) with those weights.
         This is Piff's state after an iteration that left the model at its initial values.
-        The reference solver then holds weights and centres fixed while it optimises; its
+        The reference solver then holds weights and centers fixed while it optimizes; its
         ``refresh`` rounds repeat this update at the optimum (see
         `psf_fomo.datafit.reference.reference_from_data_fit`).
 
@@ -360,7 +361,7 @@ class DataFit:
         -------
         DataFitResult
             ``fit_summary['initialized_only']`` True, ``niter`` 0, ``converged`` False; χ² and
-            dof are Piff's (pixels − 3 per star) of the initialised model.
+            dof are Piff's (pixels − 3 per star) of the initialized model.
         """
         if save_to is None:
             with tempfile.TemporaryDirectory() as folder:
@@ -391,12 +392,13 @@ class DataFit:
     def _write_inputs(self, folder):
         """Checks, the working copy, the Piff catalog and config, written to ``folder``."""
         psf_config = self.fit_config.piff_config(self.image.filter_name)
-        # Only RomanOptics depends on the pixel frame (GalSim's aberration field at the star's
-        # pixel position); other models are built on the sky through the WCS.
-        strict = uses_roman_optics(psf_config)
+        # A frame mismatch is a warning, not an error: it matters only for RomanOptics
+        # (GalSim's aberration field at the star's pixel position), and with a GalSim from
+        # before its science-frame update every L2 file is mirrored. The result is kept in
+        # the checks.
         attitude = self.attitude()      # first: set_attitude(True) fails before any work
         checks = {"weights_ratio": self.image.check_weights(),
-                  "orientation": self.image.check_orientation(strict=strict),
+                  "orientation": self.image.check_orientation(strict=False),
                   "nonfinite": self.image.check_finite(),
                   "attitude": {"requested": self.use_attitude, "used": attitude is not None,
                                "values": attitude}}
@@ -422,7 +424,7 @@ class DataFit:
         return psf, objects, candidates, stars
 
     def _result(self, psf, table, summary, inputs, objects, candidates, stars, folder):
-        """The `DataFitResult` of a run or an initialisation (``folder`` None: not saved)."""
+        """The `DataFitResult` of a run or an initialization (``folder`` None: not saved)."""
         piff_catalog = inputs["piff_catalog"]
         summary.update(n_catalog=len(piff_catalog), n_objects=len(objects),
                        n_candidates=len(candidates))
@@ -449,13 +451,12 @@ def piff_input_config(image, catalog, catalog_file, piff_catalog, stamp_size=25,
     catalog_file : str or Path
         Where the Piff catalog (``piff_catalog``) is written.
     piff_catalog : astropy.table.Table
-        `StarCatalog.piff_table` output, for its column names; its positions must be in the
-        frame of the file Piff reads.
+        `StarCatalog.piff_table` output, for its column names.
     stamp_size : int
         Stamp side, pixels. Default 25.
     image_file : str or Path, optional
-        File Piff reads (default the image's own file; `DataFit` passes the working copy in
-        GalSim's frame).
+        File Piff reads (default the image's own file; `DataFit` passes the cleaned working
+        copy when there is one).
 
     Returns
     -------
@@ -474,7 +475,7 @@ def initialize_stars(psf, stars, logger):
     """Piff's ``fit`` up to its first iteration plus its Poisson update (`DataFit.initialize`).
 
     Sets ``psf.stars`` and the attributes Piff's ``fit`` sets (``chisq``, ``dof`` over fit
-    stars, ``niter`` 0, ``nremoved``, ``last_delta_chisq`` 0), so the result can be summarised
+    stars, ``niter`` 0, ``nremoved``, ``last_delta_chisq`` 0), so the result can be summarized
     and written like a fitted PSF.
     """
     stars = psf.initialize_flux_center(stars, logger=logger)
@@ -497,9 +498,9 @@ def initialize_stars(psf, stars, logger):
 
 
 def solve_mean_interps(psf, stars):
-    """Solve unsolved ``Mean`` interpolators on the initialised fit stars and interpolate.
+    """Solve unsolved ``Mean`` interpolators on the initialized fit stars and interpolate.
 
-    Piff's ``Polynomial`` sets its coefficients at initialisation and interpolates the stars;
+    Piff's ``Polynomial`` sets its coefficients at initialization and interpolates the stars;
     ``Mean`` stays unsolved (``mean`` None) until the first iteration, so the PSF could not
     be written or drawn at new positions. Solving it on the initial parameters of the fit
     stars (as an iteration does) gives the same kind of initial state as ``Polynomial``.
@@ -644,7 +645,7 @@ class DataFitResult:
         """Fitted stars with their data images, and the star table rows (same order).
 
         After `load_data_fit` the stamps are re-cut with Piff's Input from the saved config,
-        the saved fits attached (parameters, flux, centre, reserve and flag status), Piff's
+        the saved fits attached (parameters, flux, center, reserve and flag status), Piff's
         ``max_snr_weight`` scaling re-applied from the saved ``snr`` / ``raw_snr``, and,
         with model Poisson weights, the Poisson term re-added from the fitted model (as in
         Piff's last iteration, up to its final reflux).
@@ -677,7 +678,7 @@ class DataFitResult:
     def moment_summary(self, columns=("dT_T", "de1", "de2")):
         """Mean, std, error on the mean, n, n_flagged per (set, comparison, algorithm).
 
-        Residuals exist for ``'data'`` only; for ``'model_os'`` summarise the model moments,
+        Residuals exist for ``'data'`` only; for ``'model_os'`` summarize the model moments,
         e.g. ``columns=('T_model', 'e1_model', 'e2_model')``.
         """
         if self.moments is None:
@@ -689,7 +690,7 @@ class DataFitResult:
                       size=MODEL_OS_SIZE):
         """Oversampled model moments across the SCA (see `residuals.model_moments`).
 
-        Positions: ``x``, ``y`` (native pixels) if given, else the centres of an
+        Positions: ``x``, ``y`` (native pixels) if given, else the centers of an
         ``n_grid`` × ``n_grid`` grid of cells covering the SCA.
         """
         if x is None or y is None:
@@ -705,13 +706,13 @@ class DataFitResult:
 
     def reference(self, freeze=(), starts=("given",), max_nfev=50, moments="same",
                   centers="fitted", report="all", given=True, refresh=None):
-        """Joint χ² optimum of this fit's model with centres held at Piff's fitted ones
+        """Joint χ² optimum of this fit's model with centers held at Piff's fitted ones
         (see `psf_fomo.datafit.reference.reference_from_data_fit`).
 
         Returns a dict with ``'given'`` (Piff's solution, fluxes profiled, on the reference's
         χ² and dof; only if ``given``) and ``'optimum'`` ({start: ReferenceResult}).
         ``report='fit'`` reports only the fit stars (faster with many reserve stars).
-        ``refresh``: rounds of Poisson-weight and centre update at the optimum (default 2
+        ``refresh``: rounds of Poisson-weight and center update at the optimum (default 2
         after `DataFit.initialize`, 0 after a Piff fit).
         """
         from .reference import reference_from_data_fit
@@ -747,9 +748,15 @@ class DataFitResult:
         e.g. ``plot_field('sky_resid')`` or ``plot_field('T_model', 'model_os', 'hsm')``."""
         return plotting.plot_field(self, column, comparison, algorithm, which)
 
-    def plot_components(self, kind="pixelgrid", n_grid=3, oversample=5, size=9):
+    def plot_components(self, kind="pixelgrid", n_grid=3, oversample=5, size=9,
+                        include_pixel=True):
         """See `piffval.plotting.plot_components`."""
-        return plotting.plot_components(self, kind, n_grid, oversample, size)
+        return plotting.plot_components(self, kind, n_grid, oversample, size, include_pixel)
+
+    def plot_component_images(self, x=None, y=None, size=9, oversample=5, include_pixel=True):
+        """Every model component alone at one position, native and oversampled (see
+        `piffval.plotting.plot_component_images`)."""
+        return plotting.plot_component_images(self, x, y, size, oversample, include_pixel)
 
     def plot_zernikes(self):
         """Fitted extra Zernikes with Piff's σ (see `piffval.plotting.plot_zernikes`)."""
@@ -767,7 +774,7 @@ class DataFitResult:
         """Save to a folder: ``psf.fits`` (Piff), ``stars.fits``, ``selection.fits``,
         ``moments.fits`` (if computed), ``config.yaml`` (run settings incl. the Piff config,
         fit summary, checks, provenance). `DataFit.run` also writes ``catalog.fits``,
-        ``piff.yaml``, the working copy ``image_galsim_frame.fits`` (``frame='science'``)
+        ``piff.yaml``, the cleaned working copy ``image_cleaned.fits`` (if needed)
         and, for an in-memory catalog, ``detections.fits`` there."""
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
@@ -785,8 +792,8 @@ class DataFitResult:
 def load_data_fit(path):
     """Load a `DataFitResult` saved by `DataFit.run`.
 
-    The Piff catalog and, for ``frame='science'`` images, the flipped working copy are read
-    from the folder (so the folder can be moved); a ``frame='galsim'`` image must still be at
+    The Piff catalog and, if there is one, the cleaned working copy are read from the folder;
+    otherwise the image must still be at
     its recorded path.
 
     Parameters
@@ -801,13 +808,18 @@ def load_data_fit(path):
     path = Path(path)
     saved = read_yaml(path / "config.yaml")
     config = saved["config"]
+    if config["image"].get("flip"):
+        raise ValueError(f"{path}: this fit was made on a copy flipped into the old "
+                         "galsim.roman frame; it does not match GalSim's science frame now in "
+                         "use. Refit the image.")
     config["piff"]["input"]["cat_file_name"] = str((path / "catalog.fits").resolve())
     if (path / FIT_COPY_NAME).exists():
         config["piff"]["input"]["image_file_name"] = str((path / FIT_COPY_NAME).resolve())
     psf = piff.read(str(path / "psf.fits"))
     table = Table.read(path / "stars.fits")
     selection = Table.read(path / "selection.fits")
-    moments = Table.read(path / "moments.fits") if (path / "moments.fits").exists() else None
+    moments = (upgrade_sizes(Table.read(path / "moments.fits"))
+               if (path / "moments.fits").exists() else None)
     return DataFitResult(psf, table, saved["fit_summary"], config, saved["provenance"],
                          saved["checks"], selection, moments=moments)
 

@@ -21,7 +21,7 @@ def test_default_is_optics_with_mtf():
     psf = FitConfig().piff_config("H158")
     assert types(psf) == ["Convolve", ["RomanOptics", "GaussianMixture"]]
     optics = psf["components"][0]
-    assert "chromatic" not in optics and optics["filter_name"] == "H158"   # Piff's default
+    assert optics["chromatic"] is False and optics["filter_name"] == "H158"   # monochromatic
     assert optics["max_zernike"] == 22 and optics["aberration_prior_sigma"] == 0.05
     assert (psf["max_iter"], psf["min_iter"], psf["chisq_thresh"]) == (30, 2, 0.1)
 

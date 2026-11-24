@@ -10,14 +10,14 @@ Steps (each star ends with one ``reason``):
 1. ``'flagged'``: the size measurement failed (flag ≠ 0) or size / magnitude is not finite.
 2. ``'faint'``: fainter than ``mag_max`` (optional; Piff's ``min_snr`` also removes faint
    stars).
-3. Locus centre: log(size) fitted as a polynomial of order ``order`` in the normalised SCA
+3. Locus center: log(size) fitted as a polynomial of order ``order`` in the normalized SCA
    position (0: constant; 1: plane, default; 2: quadratic), robustly (iterative clipping at
-   ``k`` × the locus width). The PSF size varies across an SCA, so a field-dependent centre
-   keeps the band equally fair everywhere. Residual = size / centre(x, y) − 1; locus width =
+   ``k`` × the locus width). The PSF size varies across an SCA, so a field-dependent center
+   keeps the band equally fair everywhere. Residual = size / center(x, y) − 1; locus width =
    robust σ of the residuals of all usable stars (1.4826 × MAD).
 4. ``'saturated'``: brighter than the saturation turn, a *change* of the locus with
    magnitude. Residuals are binned in magnitude (``mag_bin``); the reference level is the
-   median of the bin medians (so a constant offset between the fitted centre and the bin
+   median of the bin medians (so a constant offset between the fitted center and the bin
    medians, e.g. from a skewed size distribution, cancels). A bin deviates when its median
    differs from the reference by more than ``sat_sigma`` × its uncertainty (1.2533 × width /
    √n) **and** by at least ``min_shift`` × width (a real turn grows sizes by many widths; this
@@ -27,12 +27,12 @@ Steps (each star ends with one ``reason``):
    faint to bright. Bins with fewer than ``min_bin_count`` stars are skipped. If the turn
    would mark more than half of the usable stars, it is not applied (``bright_limit_source``
    ``'unclear'``, a warning): saturation affects the bright tail. ``bright_limit``
-   (magnitude) overrides the detection. The centre is refitted without the saturated stars.
+   (magnitude) overrides the detection. The center is refitted without the saturated stars.
 5. ``'off_locus'``: |residual| > ``k`` × width (k = 3 keeps 99.7 % of a Gaussian locus:
    removes binaries, blends and other outliers without trimming the PSF size distribution).
 6. ``'selected'``: the rest.
 
-Sizes are those of `psf_fomo.datafit.measure` (T [pix²] or σ [pix] of any algorithm, or the
+Sizes are those of `psf_fomo.datafit.measure` (T [arcsec²] or σ [arcsec] of any algorithm, or the
 catalog ``size_cat``); the default ``T_wmom_0.4`` uses a fixed weight, which gives a stable
 size on native stamps (that wmom sizes depend on the weight does not matter here).
 """
@@ -43,7 +43,7 @@ from astropy.table import Table
 
 from .catalog import PIFF_ID
 
-N_PIX = 4088              # SCA side, pixels (positions normalised to [-1, 1])
+N_PIX = 4088              # SCA side, pixels (positions normalized to [-1, 1])
 REASONS = ("selected", "saturated", "off_locus", "faint", "flagged")
 MAX_ITER = 20
 MAX_SATURATED_FRACTION = 0.5   # a detected turn marking more usable stars is not applied
@@ -56,7 +56,7 @@ class LocusResult:
     ----------
     table : astropy.table.Table
         One row per star of the input: ``id``, ``x``, ``y``, ``mag``, ``size``, ``size_ref``
-        (locus centre at the star's position, same units as ``size``), ``resid`` (size /
+        (locus center at the star's position, same units as ``size``), ``resid`` (size /
         size_ref − 1), ``reason``.
     summary : dict
         ``n_<reason>`` counts, ``bright_limit`` (mag or None) and ``bright_limit_source``
@@ -98,10 +98,10 @@ def select_locus(table, size="T_wmom_0.4", order=1, k=3.0, mag="mag", mag_max=No
         `StarCatalog.measure` output (``id``, ``x``, ``y``, the size and magnitude columns,
         ``flag_<alg>``).
     size : str
-        Size column: ``T_<alg>`` [pix²], ``sigma_<alg>`` [pix] or ``size_cat``. Default
+        Size column: ``T_<alg>`` [arcsec²], ``sigma_<alg>`` [arcsec] or ``size_cat``. Default
         ``'T_wmom_0.4'`` (measure with ``algorithms=("wmom",)``).
     order : {0, 1, 2}
-        Polynomial order of the locus centre across the SCA. Default 1 (a plane).
+        Polynomial order of the locus center across the SCA. Default 1 (a plane).
     k : float
         Band half-width in robust σ of the fractional size residual. Default 3.
     mag : str
@@ -209,7 +209,7 @@ def _flag_column(size):
 
 
 def _basis(x, y, order):
-    """Polynomial terms x̂^i ŷ^j (i + j ≤ order) of positions normalised to [-1, 1]."""
+    """Polynomial terms x̂^i ŷ^j (i + j ≤ order) of positions normalized to [-1, 1]."""
     xn = 2 * (x - 1) / (N_PIX - 1) - 1
     yn = 2 * (y - 1) / (N_PIX - 1) - 1
     terms = [xn ** i * yn ** j for i in range(order + 1) for j in range(order + 1 - i)]
@@ -222,7 +222,7 @@ def _robust_fit(basis, logs, use, k):
     The width is the robust σ (1.4826 × MAD) of the residuals of *all* ``use`` stars, not of
     the clipped members: the MAD already resists outliers, and a width from clipped members
     would shrink at every pass for bands narrower than ≈ 2σ. Clipping only protects the fit
-    of the centre, and is centred on the median residual: a first least-squares fit over all
+    of the center, and is centered on the median residual: a first least-squares fit over all
     stars can be dragged off a tight locus by a few outliers (e.g. galaxies), so that every
     star would be clipped around zero.
 
@@ -238,9 +238,9 @@ def _robust_fit(basis, logs, use, k):
         coeff = np.linalg.lstsq(basis[members], logs[members], rcond=None)[0]
         resid = np.exp(logs - basis @ coeff) - 1
         r = resid[use]
-        centre = np.median(r)
-        width = max(1.4826 * np.median(np.abs(r - centre)), 1e-6)
-        new = use & (np.abs(resid - centre) <= k * width)
+        center = np.median(r)
+        width = max(1.4826 * np.median(np.abs(r - center)), 1e-6)
+        new = use & (np.abs(resid - center) <= k * width)
         if new.sum() <= basis.shape[1]:
             raise ValueError(f"the locus fit kept only {int(new.sum())} stars after clipping "
                              f"at {k:g} × width ({width:.4f}); the size distribution has no "

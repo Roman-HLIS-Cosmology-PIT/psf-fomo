@@ -19,15 +19,15 @@ def test_gaussian_noise_in_adu():
 def test_roman_background_variance():
     dark = galsim.roman.dark_current * galsim.roman.exptime
     read2 = galsim.roman.read_noise ** 2
-    all_effects = {"kind": "roman", "effects": list(ROMAN_EFFECTS)}
+    all_effects = {"kind": "roman-L1", "effects": list(ROMAN_EFFECTS)}
     np.testing.assert_allclose(background_variance(all_effects, 100.0),
                                (100.0 + dark + read2) / GAIN ** 2)
     # Without Poisson noise the sky adds no variance.
-    no_poisson = {"kind": "roman", "effects": ["sky", "read"]}
+    no_poisson = {"kind": "roman-L1", "effects": ["sky", "read"]}
     np.testing.assert_allclose(background_variance(no_poisson, 100.0), read2 / GAIN ** 2)
 
 
 def test_star_gain():
     assert star_gain({"kind": "gaussian", "sigma": 1.0}) is None
-    assert star_gain({"kind": "roman", "effects": ["read"]}) is None
-    assert star_gain({"kind": "roman", "effects": ["poisson", "read"]}) == GAIN
+    assert star_gain({"kind": "roman-L1", "effects": ["read"]}) is None
+    assert star_gain({"kind": "roman-L1", "effects": ["poisson", "read"]}) == GAIN

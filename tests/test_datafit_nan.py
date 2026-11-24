@@ -1,7 +1,7 @@
 """NaN pixels in L2 images and stars Piff cannot fit.
 
 L2 files can have NaN in masked pixels. Piff zero-weights masked pixels but multiplies
-weight × image in its sums, so one NaN in a stamp would make that star's flux and centre NaN
+weight × image in its sums, so one NaN in a stamp would make that star's flux and center NaN
 and Piff would exclude it, leaving χ² and dof unset. The fit's working copy cleans such
 pixels, and the diagnostics accept stars without a χ².
 """
@@ -30,7 +30,7 @@ def md5(path):
 
 @pytest.fixture(scope="module")
 def nan_field(tmp_path_factory):
-    """Stars only (GalSim frame), N_NAN NaN pixels, all masked; one 3 pix from star 1."""
+    """Stars only, N_NAN NaN pixels, all masked; one 3 pix from star 1."""
     folder = tmp_path_factory.mktemp("nan")
     objects = field(n_stars=20, n_gals=0, seed=41)
     wcs = roman_wcs(sca=5)
@@ -61,7 +61,7 @@ def test_check_finite_and_cleaned_copy(nan_field, tmp_path):
     assert np.all(np.isfinite(data)) and np.all(data[ys, xs] == 0)
     assert np.all(fits.getdata(copy, img.hdus["ivar"])[ys, xs] == 0)
     assert np.all(fits.getdata(copy, img.hdus["mask"])[ys, xs] == 1)
-    # Elsewhere the copy equals the original (no flip for a GalSim-frame file).
+    # Elsewhere the copy equals the original.
     orig = fits.getdata(image, img.hdus["image"])
     good = np.isfinite(orig)
     np.testing.assert_array_equal(data[good], orig[good])
@@ -88,7 +88,7 @@ def test_star_with_nan_in_stamp_is_fitted(nan_field, nan_fit):
 
 
 def test_diagnostics_accept_a_star_piff_could_not_fit(nan_fit):
-    # A star as Piff leaves it after a failed reflux: NaN flux and centre, χ² and dof unset.
+    # A star as Piff leaves it after a failed reflux: NaN flux and center, χ² and dof unset.
     stars, _ = nan_fit.fitted_stars()
     s0 = stars[0]
     broken = piff.Star(s0.data, piff.StarFit(s0.fit.params, flux=np.nan,

@@ -63,7 +63,7 @@ def test_min_sep_rejects_both_stars_of_a_close_pair():
 
 
 def test_cuts_apply_per_observation_and_reserve_among_kept():
-    # The same positions in two observations: stars of another exposure are not neighbours.
+    # The same positions in two observations: stars of another exposure are not neighbors.
     stars, rows, rejected = cut_simulation_stars(FakeSimulation(), 1, [0, 1], make_cuts(),
                                                  frac=0.5, seed=1)
     assert list(rows["obs"]) == [0, 1] and list(rows["star_id"]) == [2, 2]

@@ -4,7 +4,7 @@ Piff's ``RhoStats`` measures data and model stars with the process-wide shape me
 by default), which can fail on undersampled stamps. `MomentRhoStats` overrides the
 per-star measurement hook (``Stats._measure_size_shape``) to use one of Piff's algorithms
 directly, so the global method is never changed. Everything else is Piff's: model stars drawn
-at the fitted flux and centre, T = trace in arcsec², reduced shear g, positions (u, v) in
+at the fitted flux and center, T = trace in arcsec², reduced shear g, positions (u, v) in
 arcsec, stars flagged on either side dropped, TreeCorr ``GGCorrelation`` (needs ``treecorr``:
 ``pip install -e ".[stats]"``).
 
@@ -13,7 +13,7 @@ arcsec, stars flagged on either side dropped, TreeCorr ``GGCorrelation`` (needs 
 with δg = g_data − g_model, δT = T_data − T_model. Piff measures data and model stars about the
 same fitted position (``star.fit.center``; Piff ≥ 280064f), which wmom needs since it has
 no centroid fit. One SCA spans
-≈ 7.5′, so the default separations are 0.1′ … 10′. τ statistics need a galaxy catalogue and
+≈ 7.5′, so the default separations are 0.1′ … 10′. τ statistics need a galaxy catalog and
 are not included.
 """
 import numpy as np

@@ -26,7 +26,7 @@ from astropy.table import Table, vstack
 
 from .. import models  # noqa: F401  (registers our Piff models before any config is parsed)
 from ..io import provenance, read_yaml, write_yaml
-from ..moments.measure import DEFAULT_WMOM_FWHM
+from ..moments.measure import DEFAULT_WMOM_FWHM, upgrade_sizes
 from ..sim import load_simulation
 from ..sim import noise as noise_mod
 from ..sim import storage
@@ -43,7 +43,7 @@ DEFAULT_DIAGNOSTICS = {"moments": True, "native": ["wmom", "gauss"],
                        "wmom_fwhm": [DEFAULT_WMOM_FWHM], "oversampled": ["hsm"],
                        "oversample": 5, "include_pixel": True,
                        "comparisons": list(COMPARISONS)}
-# Default cuts: stars with a neighbour within 2.5″ are rejected; no S/N cap on the weights
+# Default cuts: stars with a neighbor within 2.5″ are rejected; no S/N cap on the weights
 # (Piff's default of 100 would down-weight every bright star).
 DEFAULT_CUTS = make_cuts(min_sep=DEFAULT_MIN_SEP, max_snr_weight=0.0)
 REJECTED_COLUMNS = ("obs", "sca", "star_id", "x", "y", "mag")
@@ -95,7 +95,7 @@ class PiffValidation:
                  max_pixel_cut=None, reject_where=None, nstars=None):
         """Piff's rejection cuts, as for real data (`psf_fomo.datafit.StarCatalog.set_cuts`).
 
-        Applied to each observation separately (a neighbour counts only in the same
+        Applied to each observation separately (a neighbor counts only in the same
         exposure), in memory and in file-based runs alike. Rejected stars are not fitted and
         not diagnosed; they are listed in `FitResult.rejected`. Without a call the defaults
         apply: ``min_sep`` 2.5″ and no S/N cap. ``set_cuts(None)`` turns every cut off.
@@ -219,7 +219,7 @@ class PiffValidation:
         piff_dict = self.fit_config.piff_config(self.sim.config["filter"])
         if needs_star_seds(piff_dict) and self.sim.config["chromatic"] is None:
             raise ValueError(
-                "the Piff model is chromatic (RomanOptics, Piff's default) but the simulation "
+                "the Piff model is chromatic (RomanOptics with chromatic=True) but the simulation "
                 "is monochromatic, so its stars have no SED: use "
                 "FitConfig.set_optics(..., chromatic=False), or a chromatic simulation")
 
@@ -232,7 +232,7 @@ class PiffValidation:
         return psf, piff_dict
 
     def initialize(self):
-        """Build the Piff model and initialise it on the stars, without fitting.
+        """Build the Piff model and initialize it on the stars, without fitting.
 
         Runs Piff's own ``initialize_flux_center`` and ``initialize_params`` (with the
         configured shape method), as at the start of ``psf.fit``; used by the reference solver.
@@ -240,9 +240,9 @@ class PiffValidation:
         Returns
         -------
         psf : piff.PSF
-            The initialised model (``psf.stars`` set).
+            The initialized model (``psf.stars`` set).
         stars : list of piff.Star
-            Initialised stars (fit parameters set, reserve marked).
+            Initialized stars (fit parameters set, reserve marked).
         rows : astropy.table.Table
             Their simulation catalog rows.
         """
@@ -448,7 +448,7 @@ class FitResult:
         """Fitted stars with their data images, and the matching simulation catalog rows.
 
         After `load_fit` the images are re-cut from the simulation and the saved fits
-        (parameters, flux, centre, reserve and flag status) are attached.
+        (parameters, flux, center, reserve and flag status) are attached.
         """
         if self._stars is None:
             if self.sim is None:
@@ -493,7 +493,7 @@ class FitResult:
                       size=MODEL_OS_SIZE):
         """Oversampled model moments across the SCA (see `residuals.model_moments`).
 
-        Positions: ``x``, ``y`` (native pixels) if given, else the centres of an
+        Positions: ``x``, ``y`` (native pixels) if given, else the centers of an
         ``n_grid`` × ``n_grid`` grid of cells covering the SCA. Needs no simulation, except
         for a chromatic model reloaded from disk (the SED comes from the simulation's stars).
         """
@@ -520,7 +520,7 @@ class FitResult:
                   report="all", given=True):
         """Joint χ² optimum of this fit's model (see `psf_fomo.reference.reference_from_fit`).
 
-        Returns a dict with ``'given'`` (Piff's solution with true centres and profiled
+        Returns a dict with ``'given'`` (Piff's solution with true centers and profiled
         fluxes, on the reference's χ² and dof; only if ``given``) and ``'optimum'``
         ({start: ReferenceResult}). ``report='fit'`` reports only the fit stars.
         """
@@ -559,9 +559,15 @@ class FitResult:
         """See `plotting.plot_field`."""
         return plotting.plot_field(self, column, comparison, algorithm, which)
 
-    def plot_components(self, kind="pixelgrid", n_grid=3, oversample=5, size=9):
+    def plot_components(self, kind="pixelgrid", n_grid=3, oversample=5, size=9,
+                        include_pixel=True):
         """See `plotting.plot_components`."""
-        return plotting.plot_components(self, kind, n_grid, oversample, size)
+        return plotting.plot_components(self, kind, n_grid, oversample, size, include_pixel)
+
+    def plot_component_images(self, x=None, y=None, size=9, oversample=5, include_pixel=True):
+        """Every model component alone at one position, native and oversampled (see
+        `plotting.plot_component_images`)."""
+        return plotting.plot_component_images(self, x, y, size, oversample, include_pixel)
 
     def plot_zernikes(self):
         """See `plotting.plot_zernikes`."""
@@ -605,7 +611,8 @@ def load_fit(path, sim=None, load_sim=True):
     saved = read_yaml(path / "config.yaml")
     psf = piff.read(str(path / "psf.fits"))
     table = Table.read(path / "stars.fits")
-    moments = Table.read(path / "moments.fits") if (path / "moments.fits").exists() else None
+    moments = (upgrade_sizes(Table.read(path / "moments.fits"))
+               if (path / "moments.fits").exists() else None)
     rejected = (Table.read(path / "rejected.fits") if (path / "rejected.fits").exists()
                 else None)
     sim_path = saved["config"].get("simulation")

@@ -5,8 +5,6 @@
   temporary folder (`SyntheticL2`) or a folder of your choice.
 - `write_l2_file`: any image in DN/s written in the L2 layout (``docs/datafit.md``).
 - `write_sep_catalog`: a detection catalog shaped like SEP output (0-based x, y; HDU 1).
-- `to_science_frame`: flip a file written in GalSim's frame into Roman's science frame, as
-  real L2 files are.
 
 The noise model is deliberately simple: Poisson noise of (signal + sky) × gain and Gaussian
 read noise, one gain and one sky level per detector. No detector effects beyond those of the
@@ -31,7 +29,6 @@ import galsim.roman
 from astropy.io import fits
 from astropy.table import Table
 
-from .l2 import L2Image, flip_axis
 
 
 class SyntheticL2:
@@ -69,8 +66,7 @@ class SyntheticL2:
         return f"SyntheticL2({kind}: {self.image_file.name}, {self.catalog_file.name})"
 
 
-def simulation_to_l2(sim, sca, folder=None, obs=0, sky=0.6, frame="science", seed=0,
-                     filter_name=None):
+def simulation_to_l2(sim, sca, folder=None, obs=0, sky=0.6, seed=0, filter_name=None):
     """One SCA of a simulation as an L2 file and a SEP-style detection catalog.
 
     The simulation's noiseless image (``run(save_noiseless=True)``) is converted to DN/s
@@ -95,10 +91,6 @@ def simulation_to_l2(sim, sca, folder=None, obs=0, sky=0.6, frame="science", see
         Which observation. Default 0.
     sky : float
         Sky level, DN/s per pixel. Default 0.6.
-    frame : {'science', 'galsim'}
-        ``'science'`` (default): flipped into Roman's science frame like real L2 files (open
-        it with ``L2Image(path)``). ``'galsim'``: left in GalSim's frame (open it with
-        ``L2Image(path, frame='galsim')``).
     seed : int
         Seed of the noise. Default 0.
     filter_name : str, optional
@@ -112,8 +104,6 @@ def simulation_to_l2(sim, sca, folder=None, obs=0, sky=0.6, frame="science", see
     """
     if sim.noiseless is None:
         raise ValueError("the simulation has no noiseless images: run(save_noiseless=True)")
-    if frame not in ("science", "galsim"):
-        raise ValueError("frame must be 'science' or 'galsim'")
     tmpdir = None
     if folder is None:
         tmpdir = tempfile.TemporaryDirectory(prefix="psf_fomo_l2_")
@@ -132,23 +122,15 @@ def simulation_to_l2(sim, sca, folder=None, obs=0, sky=0.6, frame="science", see
     if filter_name is None:
         filter_name = "F" + sim.config["filter"][1:]
 
+    # galsim.roman's WCS (and so the simulation's image) is in Roman's science frame, like
+    # real L2 files: written as it is.
     image_file = folder / f"l2_sca{sca:02d}.fits"
-    galsim_file = folder / f"l2_sca{sca:02d}_galsim.fits"
-    write_l2_file(galsim_file if frame == "science" else image_file, sci, noiseless.wcs,
-                  sca=sca, filter_name=filter_name, sky=sky, read_var=read_var, gain=gain)
-    if frame == "science":
-        to_science_frame(galsim_file, image_file)
-        galsim_file.unlink()
+    write_l2_file(image_file, sci, noiseless.wcs, sca=sca, filter_name=filter_name, sky=sky,
+                  read_var=read_var, gain=gain)
 
     truth = sim.catalogs[obs]
     truth = truth[truth["sca"] == sca]
-    n = galsim.roman.n_pix
     x, y = np.asarray(truth["x"], dtype=float), np.asarray(truth["y"], dtype=float)
-    if frame == "science":
-        if flip_axis(sca) == "x":
-            x = n + 1 - x
-        else:
-            y = n + 1 - y
     flux = np.asarray(truth["flux"], dtype=float) / galsim.roman.gain / exptime   # DN/s
     objects = [{"id": int(i) + 1, "x": float(xi), "y": float(yi), "flux": float(f),
                 "is_star": True, "r50": 1.3}
@@ -280,15 +262,3 @@ def write_sep_catalog(path, objects, abzp=26.0, sky=2.0, flux_scale=0.95, unclea
     t.write(path, overwrite=True)
     return Path(path)
 
-
-def to_science_frame(src, dst):
-    """Write a file in GalSim's frame as Roman's science frame (the per-SCA flip).
-
-    The flip is its own inverse, so flipping a GalSim-frame file with
-    `L2Image.write_fit_copy` gives the science-frame file.
-
-    Returns
-    -------
-    Path
-    """
-    return Path(L2Image(src, frame="science").write_fit_copy(dst))

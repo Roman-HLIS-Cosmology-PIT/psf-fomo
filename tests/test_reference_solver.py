@@ -83,7 +83,7 @@ def test_reference_does_not_beat_a_converged_exact_fit(synthetic_stars):
     out = solver.solve()
     given, best = out["given"].summary, out["optimum"]["given"].summary
     assert best["chisq"] <= given["chisq"] + 1e-6
-    # Piff also fits centres, the reference holds them at truth: only a small difference.
+    # Piff also fits centers, the reference holds them at truth: only a small difference.
     assert given["chisq"] - best["chisq"] < 0.01 * given["dof"]
     n_pix = sum(np.count_nonzero(s.weight.array) for s in stars)
     assert given["dof"] == n_pix - 6 - 3
@@ -103,9 +103,9 @@ def test_reserve_stars_do_not_enter_chi2(synthetic_stars):
     assert solver.dof == sum(np.count_nonzero(s.weight.array) for s in stars[1:]) - 4 - 3
 
 
-def test_reserve_stars_are_not_drawn_during_optimisation(synthetic_stars):
+def test_reserve_stars_are_not_drawn_during_optimization(synthetic_stars):
     # Reserve stars have zero weight in χ²: the optimum must not depend on them, and they are
-    # drawn only at the reported solutions (report='all'), never during the optimisation.
+    # drawn only at the reported solutions (report='all'), never during the optimization.
     stars, rows = synthetic_stars(kernel_truth(), n=8, sigma=1.0)
     for s in stars[:5]:
         s.data.properties["is_reserve"] = True
@@ -184,9 +184,9 @@ def test_comparison_table(synthetic_stars):
     out = ReferenceSolver(psf, psf.stars, rows).solve(max_nfev=20)
     table = diagnostics.star_table(psf, psf.stars, rows)
     piff_result = FitResult(psf, table, {"chisq_dof": 0.0, "converged": True}, {}, {})
-    t = comparison_table({"piff": piff_result, "piff, true centres": out["given"],
+    t = comparison_table({"piff": piff_result, "piff, true centers": out["given"],
                           "optimum": out["optimum"]["given"]})
-    assert list(t["label"]) == ["piff", "piff, true centres", "optimum"]
+    assert list(t["label"]) == ["piff", "piff, true centers", "optimum"]
     assert set(t.colnames) >= {"chisq_dof", "flux_r", "dT_T", "converged"}
     assert np.isnan(t["dT_T"][0])  # no moments computed
     assert t["converged"][0] == "True" and t["converged"][1] == ""

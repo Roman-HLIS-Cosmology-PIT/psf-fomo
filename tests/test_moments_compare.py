@@ -66,8 +66,8 @@ class FakeSimulation(Simulation):
 
 
 def expected_T_os(sigma_pix, g1, dilation):
-    """T [pix²] of the pixel-convolved sheared Gaussian: Gaussian trace + 2 × 1/12."""
-    return sigma_g_to_T(sigma_pix * dilation, g1, 0.0) + 2.0 / 12.0
+    """T [arcsec²] of the pixel-convolved sheared Gaussian: Gaussian trace + 2 × 1/12 pix²."""
+    return (sigma_g_to_T(sigma_pix * dilation, g1, 0.0) + 2.0 / 12.0) * PIX**2
 
 
 @pytest.fixture(scope="module")
@@ -159,6 +159,20 @@ def test_save_load_round_trip(result, tmp_path):
     for name in result.table.colnames:
         np.testing.assert_array_equal(loaded.table[name], result.table[name])
     assert len(loaded.differences()) == len(result.differences())
+
+
+def test_load_converts_tables_saved_in_pixels(result, tmp_path):
+    # A table saved before sizes were in arcsec: no SIZEUNIT, T in pix², sigma in pix.
+    result.save(tmp_path)
+    old = result.table.copy()
+    old.meta.clear()
+    old["T"] = old["T"] / PIX**2
+    old["sigma"] = old["sigma"] / PIX
+    old.write(tmp_path / "moments.fits", overwrite=True)
+    with pytest.warns(UserWarning, match="native pixels"):
+        loaded = load_moments(tmp_path)
+    np.testing.assert_allclose(loaded.table["T"], result.table["T"], rtol=1e-12)
+    np.testing.assert_allclose(loaded.table["sigma"], result.table["sigma"], rtol=1e-12)
 
 
 def test_builder_validation(tmp_path):

@@ -34,7 +34,7 @@ def test_mtf_kernel_variance():
     np.testing.assert_allclose(mtf_kernel(1.0).flux, 1.0)
 
 
-def test_random_walk_rms_and_centring():
+def test_random_walk_rms_and_centering():
     dx, dy, w = random_walk_offsets(14.0, 200, np.random.default_rng(0))
     np.testing.assert_allclose([dx.std(), dy.std()], 14.0)
     np.testing.assert_allclose([dx.mean(), dy.mean()], 0.0, atol=1e-12)

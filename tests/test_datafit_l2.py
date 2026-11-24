@@ -124,7 +124,7 @@ def test_piff_reads_the_file(tmp_path, l2_file, wcs):
     # Piff's own Files input on this layout: sky subtracted, IVAR_UNIF as weight, MASK_UNIF as
     # bad pixels, the TAN-SIP WCS from the image header.
     mask = np.zeros((256, 256), np.uint8)
-    mask[149, 179] = 1  # 0-based [y-1, x-1]: pixel (180, 150), next to star 1's centre
+    mask[149, 179] = 1  # 0-based [y-1, x-1]: pixel (180, 150), next to star 1's center
     img = open_l2(l2_file(mask=mask))
     cat = Table({"x": [s[0] for s in STARS], "y": [s[1] for s in STARS]})
     cat.write(tmp_path / "cat.fits")

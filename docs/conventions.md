@@ -9,38 +9,43 @@ Units, coordinates and definitions used throughout psf-fomo. The module pages (`
 |---|---|
 | positions on the SCA (`x`, `y`) | native pixels (GalSim convention, below) |
 | sky offsets, PSF sizes in Piff configs (PixelGrid scale, GaussianMixture sigmas, Piff `Gaussian`) | arcsec |
-| second moments, `T`, kernel parameters (`GaussianMoments`, `add_kernel`) | native pix² |
-| Piff `GaussianBlur` parameters `[ixx, iyy, ixy]` | arcsec² (converted to pix² in our tables) |
+| measured sizes: `T` (and `T_*` columns) | arcsec² |
+| measured `sigma` (and `sigma_*` columns) | arcsec |
+| kernel parameters M (`GaussianMoments`, `add_kernel`, component tables) | native pix² |
+| Piff `GaussianBlur` parameters `[ixx, iyy, ixy]` | arcsec² (converted to pix² in component tables) |
 | Zernike aberrations | waves |
 | magnitudes | AB |
 | simulated images | ADU = e⁻ / `galsim.roman.gain`, background subtracted |
 | real L2 images | the file's units (DN/s; see `datafit.md`) |
 | jitter | milliarcsec |
 
-Native pixel: `galsim.roman.pixel_scale` = 0.11″. Arcsec are converted to native pixels with
-this nominal scale everywhere, also with the Roman WCS, so sizes are comparable between images
-and between the simple and the Roman WCS.
+Native pixel: `galsim.roman.pixel_scale` = 0.11″. Measured sizes are on the sky (through each
+image's local WCS), so they are comparable between native and oversampled images and between
+the simple and the Roman WCS. Kernel parameters are converted between pix² and arcsec² with
+the nominal 0.11″, also with the Roman WCS. For a size in nominal native pix², divide T by
+0.11² = 0.0121.
 
 ## Coordinates
 
-- **Pixels.** GalSim convention: pixel centres at integer coordinates, an SCA spans
+- **Pixels.** GalSim convention: pixel centers at integer coordinates, an SCA spans
   1 … 4088. Sub-pixel phase = position − round(position), in [−0.5, 0.5).
 - **World axes.** Shapes, kernels and second moments are along the world (u, v) axes (the
   local WCS Jacobian applied), not the pixel axes.
-- **Fitted centres.** Piff's `star.fit.center` is in (u, v) arcsec relative to the catalog
+- **Fitted centers.** Piff's `star.fit.center` is in (u, v) arcsec relative to the catalog
   position; star tables give it as `du`, `dv` [arcsec] and `dx`, `dy` [pix] (converted with
   the local WCS Jacobian).
 - **Field coordinates.** Linear error fields use x̂ = x / 4088, ŷ = y / 4088.
-- **Real data.** Roman L2 files are in the science frame, which is mirrored relative to
-  GalSim's SCA frame (a flip in y or in x depending on the SCA). `L2Image(frame=...)` states
-  the frame of the input file; fits with RomanOptics use a flipped working copy (`datafit.md`).
+- **Pixel frame.** Roman L2 files, `galsim.roman`'s WCS and PSFs, and so the simulations and
+  Piff's `RomanOptics`, are all in Roman's science frame (needs a GalSim with its
+  science-frame update, currently GalSim `main`); files are fitted as they are
+  (`datafit.md`).
 
 ## Moments
 
 The same definitions for every algorithm (`psf_fomo.moments.measure`):
 
-- second-moment matrix M = (Mxx, Mxy, Myy) in native pix², world axes;
-- size **T = Mxx + Myy** (trace), native pix²; sigma = det(M)^¼ (native pix), so
+- second-moment matrix M = (Mxx, Mxy, Myy) in arcsec², world axes;
+- size **T = Mxx + Myy** (trace), arcsec²; sigma = det(M)^¼ (arcsec), so
   T = 2 sigma² (1 + |g|²) / (1 − |g|²);
 - shape as **distortion** e = (Mxx − Myy, 2 Mxy) / T, and **reduced shear** g = e / (1 + √(1 − |e|²));
 - relative size error dT/T = (T − T_ref) / T_ref; shape errors de1 = e1 − e1_ref, de2 likewise;
@@ -48,7 +53,7 @@ The same definitions for every algorithm (`psf_fomo.moments.measure`):
 
 Algorithms are Piff's: `hsm` (GalSim adaptive moments), `am` (ngmix adaptive moments),
 `gauss` (ngmix elliptical Gaussian fit), `wmom` (ngmix moments with a fixed circular Gaussian
-weight of a given FWHM in arcsec, not deweighted; labelled `wmom_<fwhm>`). wmom sizes depend
+weight of a given FWHM in arcsec, not deweighted; labeled `wmom_<fwhm>`). wmom sizes depend
 on the weight, so compare them only at the same FWHM. wmom has no centroid fit: data and model
 must be measured about the same position. Piff's global shape method is never changed by
 these measurements.
@@ -106,8 +111,9 @@ exactly from the configuration, and changing one setting does not change the oth
 - Piff model structure built by `FitConfig`:
   `Sum[ Convolve[ RomanOptics, kernel, MTF ], Simple(PixelGrid) ]`, pieces left out when not
   requested.
-- **Chromatic model**: RomanOptics' `chromatic` option is left at Piff's default (True: the
-  PSF integrated over the bandpass with each star's SED) unless set. Simulated stars carry the
+- **Chromatic model**: RomanOptics is fitted monochromatic by default (`chromatic=False`,
+  the PSF at the filter's effective wavelength); `chromatic=True` integrates over the bandpass
+  with each star's SED and needs RomanOptics alone in the model. Simulated stars carry the
   simulation's SED; real-data stars get one assumed SED (flat by default). The other
   components (MTF, kernels, PixelGrid) do not depend on wavelength.
 - Linear models (PixelGrid) use `BasisPolynomial`; nonlinear per-star models

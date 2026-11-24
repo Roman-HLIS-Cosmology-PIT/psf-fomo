@@ -1,6 +1,6 @@
 """Star positions and brightness on an SCA.
 
-Positions use GalSim image coordinates: pixel centres are at integer values and an SCA spans
+Positions use GalSim image coordinates: pixel centers are at integer values and an SCA spans
 1 … ``galsim.roman.n_pix`` in x and y. The sub-pixel phase of a position is
 ``position - round(position)``, in [-0.5, 0.5].
 """
@@ -26,7 +26,7 @@ def draw_positions(n_stars, kind, rng, margin, phase=None, n_pix=galsim.roman.n_
         Distance in native pixels kept clear of each SCA edge, so drawn stamps stay on-chip.
     phase : tuple of float, optional
         Fixed sub-pixel phase (fx, fy), each in [-0.5, 0.5]; e.g. (0, 0) puts every star at a
-        pixel centre. Default None (random phases).
+        pixel center. Default None (random phases).
     n_pix : int
         SCA size in pixels. Default ``galsim.roman.n_pix``.
 

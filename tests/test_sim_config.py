@@ -34,9 +34,30 @@ def test_invalid_settings():
     with pytest.raises(ValueError):
         sim.set_zernikes({3: 0.1})
     with pytest.raises(ValueError):
-        sim.set_noise("roman", effects=["sky", "ipc"])
+        sim.set_noise("roman-L1", effects=["sky", "ipc"])
     with pytest.raises(ValueError):
         sim.add_jitter("timeseries", t=[0, 0], dx_mas=[1, 2], dy_mas=[1, 2])
+
+
+def test_roman_noise_kinds():
+    sim = RomanSimulation()
+    sim.set_noise("roman-L1")
+    assert sim.config["noise"]["effects"] == ["sky", "poisson", "reciprocity", "dark",
+                                              "nonlinearity", "ipc", "read", "quantize"]
+    # L2: nonlinearity and IPC are corrected, the rate is not quantized.
+    sim.set_noise("roman-L2")
+    assert sim.config["noise"]["effects"] == ["sky", "poisson", "reciprocity", "dark", "read"]
+    sim.set_noise("roman-L2", effects=["poisson", "ipc"])
+    assert sim.config["noise"] == {"kind": "roman-L2", "effects": ["poisson", "ipc"]}
+    with pytest.raises(ValueError, match="roman-L1"):
+        sim.set_noise("roman")
+
+
+def test_old_roman_noise_config_loads_as_l1():
+    sim = RomanSimulation()
+    config = dict(sim.config, noise={"kind": "roman", "effects": ["sky", "poisson", "ipc"]})
+    loaded = RomanSimulation.from_config(config)
+    assert loaded.config["noise"] == {"kind": "roman-L1", "effects": ["sky", "poisson", "ipc"]}
 
 
 def configured_sim(**kwargs):
@@ -49,7 +70,7 @@ def configured_sim(**kwargs):
     sim.set_mtf(1.05, sigma_field=0.01)
     sim.add_aberration_scatter(0.001)
     sim.add_jitter("timeseries", t=[0, 1, 2], dx_mas=[0, 5, 0], dy_mas=[1, 0, -1])
-    sim.set_noise("roman", effects=["sky", "poisson", "read"])
+    sim.set_noise("roman-L2", effects=["sky", "poisson", "read"])
     return sim
 
 

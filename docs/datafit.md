@@ -7,9 +7,9 @@ summary), `piffval.residuals` (`'data'` and `'model_os'` moments, `model_moments
 `compare_fits`), and the reference solver.
 
 Contents: `L2Image`, `StarCatalog`, `DataFit` → `DataFitResult`, reference optimum with
-fitted centres. Not included: Gaia cross-match, source detection, per-star local sky,
+fitted centers. Not included: Gaia cross-match, source detection, per-star local sky,
 several exposures per fit. **Experimental**: telescope-attitude orientation
-(`set_attitude`), `compare_frames`, the stellar-locus selection (`select_locus`) and
+(`set_attitude`), the stellar-locus selection (`select_locus`) and
 `DataFit.initialize`.
 
 ## Quick start
@@ -81,8 +81,8 @@ img, cat = L2Image(synth.image_file), StarCatalog(synth.catalog_file)
 temporary folder that belongs to `synth`: it is removed by `synth.cleanup()`, when `synth`
 is deleted, or when Python exits (keep `synth` while you use the image).
 `simulation_to_l2(..., folder="out/synthetic")` keeps the files instead. The noiseless image is converted to DN/s, the sky added, and Poisson (gain
-`galsim.roman.gain × exptime`) and read noise drawn; the file is flipped into the science frame
-like real L2 files (`frame="galsim"` leaves it in GalSim's frame). The catalog has the true
+`galsim.roman.gain × exptime`) and read noise drawn; like real L2 files and `galsim.roman`, it
+is in Roman's science frame. The catalog has the true
 positions and fluxes (DN/s). `write_l2_file` and `write_sep_catalog` write any image and
 object list in the same layout.
 
@@ -120,16 +120,16 @@ img.pointing, img.attitude             # pointing from the header (degrees); att
   `SCI_UNIF` by default, so any offset between the two shows up in the per-star sky residual
   (step 2).
 - **Orientation**: Piff's `RomanOptics` evaluates GalSim's field-dependent aberrations at the
-  star's pixel position, so fits must run in `galsim.roman`'s SCA frame (see *Pixel frames*
-  below). `check_orientation` compares the fit frame's WCS Jacobian at the image centre with
+  star's pixel position, so the file must be in `galsim.roman`'s pixel frame (see *Pixel
+  frame* below). `check_orientation` compares the file's WCS Jacobian at the image center with
   `galsim.roman.getWCS` for the SCA: a mirrored axis (parity) or a pixel scale off by > 5 % is
-  an error (`strict=False` warns instead; `DataFit` is strict only for models with
-  RomanOptics, the one component that depends on the pixel frame) (the local
+  an error (`strict=False` warns instead; `DataFit` always warns and keeps the result in
+  `res.checks['orientation']`: only RomanOptics depends on the pixel frame) (the local
   scale varies by a few % across the focal plane through field distortion, e.g. ≈ 0.107″ at a
   corner of SCA 5, so it is a sanity check for a wrong WCS, not a precision test). With
   `pa_deg` it also reports the rotation; a pure 180° rotation of the pixel frame is visible
   only that way.
-- **Coordinates**: GalSim / FITS, pixel centres at 1 … 4088 (the detection catalog's 0-based
+- **Coordinates**: GalSim / FITS, pixel centers at 1 … 4088 (the detection catalog's 0-based
   x, y are shifted by +1 when the Piff catalog is written).
 - **Pointing**: `img.pointing` holds the PRIMARY keys `RA_V1`, `DEC_V1`, `PA_V3`, `TARG_RA`,
   `TARG_DEC`, `PA_APER` (degrees) under the ASDF names (`ra_v1`, ..., `pa_aperture`). For
@@ -139,53 +139,26 @@ img.pointing, img.attitude             # pointing from the header (degrees); att
   None; `DataFit` uses it to orient RomanOptics (*Telescope attitude*, below). The pointing
   is saved with the image config.
 
-## Pixel frames: Roman science frame vs GalSim
+## Pixel frame
 
-Real L2 files are in Roman's **science frame** (RDox "Coordinate Systems": each detector's
-readout frame flipped along one axis so that all SCAs look alike). `galsim.roman`, and so
-Piff's `RomanOptics`, uses a frame **mirrored** relative to it:
+L2 files are in Roman's **science frame** (RDox "Coordinate Systems"), and so are
+`galsim.roman`'s WCS and PSFs, and therefore Piff's `RomanOptics`, with a GalSim that has its
+science-frame update (GalSim `main`; not yet in a release). Files are fitted as they are,
+with catalog positions in the file's pixels. With an older GalSim, `check_orientation` finds a
+mirrored axis: a fit with RomanOptics runs with a warning, but its field dependence is
+evaluated in a mirrored frame. Fits saved by earlier versions of psf-fomo,
+which ran on a copy flipped into the old GalSim frame, cannot be loaded.
 
-| SCAs | L2 → GalSim |
-|---|---|
-| 1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17 | y flip: y_GalSim = 4089 − y_L2 |
-| 3, 6, 9, 12, 15, 18 | x flip: x_GalSim = 4089 − x_L2 |
-
-`compare_frames()` (experimental) checks this on your file by comparing its WCS with
-`galsim.roman.getWCS` at the exposure's pointing.
-
-- `L2Image(path, frame="science")` (default, real L2 files): fits run on a **working copy**
-  flipped into GalSim's frame (`write_fit_copy`, written by `DataFit.run` as
-  `image_galsim_frame.fits` in the fit folder). **The original file is never changed.**
-- The working copy's WCS header is transformed **algebraically**, not refitted: on the flipped
-  axis CRPIX → n + 1 − CRPIX, that column of the CD (or PC / CDELT) matrix changes sign, and
-  each SIP coefficient (A, B, AP, BP) gets the sign the flip implies (`flip_wcs_header`).
-  Every flipped pixel keeps its sky position (tested to 1e-6″).
-- `frame="galsim"`: the file is already in GalSim's frame (e.g. simulations); nothing is
-  flipped.
-- **Non-finite pixels** are cleaned in the working copy: where image or weight is NaN/inf,
-  image = 0, weight = 0, mask = 1. Piff zero-weights masked pixels, but its sums still multiply
-  weight × image and 0 × NaN = NaN: one NaN in a stamp would make a star's flux and centre
-  NaN and Piff would exclude it. For `frame="galsim"` a
-  copy is written only when such pixels exist. `check_finite()` and `res.checks["nonfinite"]`
-  give `total` (cleaned) and `unmasked` (should be 0; a warning otherwise).
+- **Non-finite pixels** are cleaned in a working copy (`write_fit_copy`, written by
+  `DataFit.run` as `image_cleaned.fits` in the fit folder, only when there are any): where
+  image or weight is NaN/inf, image = 0, weight = 0, mask = 1. Piff zero-weights masked
+  pixels, but its sums still multiply weight × image and 0 × NaN = NaN: one NaN in a stamp
+  would make a star's flux and center NaN and Piff would exclude it. **The original file is
+  never changed.** `check_finite()` and `res.checks["nonfinite"]` give `total` (cleaned) and
+  `unmasked` (should be 0; a warning otherwise).
 - **Stars Piff cannot fit** (it catches the error, excludes and flags the star) get NaN `chisq`,
   `dof`, `chisq_dof` in the star table, moment rows with NaN values and flag 8 (+16), and are
   left out of the reference solver; summaries skip them (`flag` 1).
-- **Catalog positions** are flipped the same way for the fit; the star and selection tables
-  keep `x_l2`, `y_l2` (positions in your file) next to `x`, `y` (fit frame).
-- **Measurements** (`StarCatalog.measure`) use the original file in its own frame: moments
-  are in world axes, so the frame does not matter there, and x, y are those of your file.
-- **Fits without RomanOptics** (Gaussian, PixelGrid, our kernels with no optics component) do
-  not depend on the pixel frame; they also run on the working copy, for uniformity.
-- **Check a file**: `img.compare_frames(pointing)` with the ASDF `meta.pointing` as a dict
-  (`ra_v1`, `dec_v1`, `pa_v3`, `pa_aperture`, `target_ra`, `target_dec`, degrees; default:
-  `img.pointing`, which then needs all six) returns a
-  table per pointing interpretation × candidate mapping. The GalSim convention that matched
-  on SCAs 3 and 11 is `world_pos` = target, `PA` = `pa_v3` (`PA_is_FPA=False`), with SCA
-  centres within ≈ 1″. Read it in three steps: the matching interpretation has a small
-  `centre_offset`; `rms_rotation_free` (PA-independent) is ≈ 1″ only for the right parity;
-  in the matching interpretation the right mapping has `rms` ≈ `rms_rotation_free` and
-  `extra_rotation` ≈ 0°. Needs the full 4088 × 4088 image.
 
 ## Detection catalog and star selection (`StarCatalog`)
 
@@ -204,7 +177,7 @@ flux_col="flux_auto", size_col="r50", clean_col="clean", extra_cols=())`.
   the run config, so `StarCatalog.from_config(res.config["catalog"])` rebuilds it; before a
   fit, `from_config(config, table=...)` needs the table.
 
-- **All detections go to Piff** as input objects, so `min_sep` sees every neighbour
+- **All detections go to Piff** as input objects, so `min_sep` sees every neighbor
   (galaxies and unclean objects included). Piff skips objects whose stamp is not fully on the
   image or is fully masked.
 - **Star selection** `select_stars(method, shape_method="gauss", ...)`:
@@ -214,11 +187,11 @@ flux_col="flux_auto", size_col="r50", clean_col="clean", extra_cols=())`.
     shape method (`FitConfig.set_piff_shape_method`).
   - `"all"`: every detection.
   - `"column"`: a flag column (`column=`, `use_flag=` / `skip_flag=` as Piff's `Flag`).
-- **Choosing `min_sep`**: a neighbour inside the stamp puts light no single-star model can
+- **Choosing `min_sep`**: a neighbor inside the stamp puts light no single-star model can
   fit (χ²/dof rises). A square stamp of `stamp_size` pixels reaches
-  `stamp_size/√2` pixels from its centre at the corners (25 → 17.7 pix ≈ 1.9″), so use
+  `stamp_size/√2` pixels from its center at the corners (25 → 17.7 pix ≈ 1.9″), so use
   `min_sep` ≳ that plus a few PSF widths, ≈ 2.5″ for 25-pixel stamps (the default; bright
-  neighbours need more, larger stamps a larger value).
+  neighbors need more, larger stamps a larger value).
 - **Cuts** `set_cuts(clean_only=True, min_snr, min_sep=2.5 [arcsec], max_mask_pixels,
   max_edge_frac, stamp_center_size, max_pixel_cut, reject_where, nstars,
   max_snr_weight)`: Piff's rejection step, applied after the selection; the same cuts as
@@ -247,7 +220,7 @@ cat = StarCatalog("exp_wfi05_det.fits")
 cat.select_stars("sizemag"); cat.set_cuts(min_snr=50, min_sep=2.5)
 t = cat.measure(img, algorithms=("gauss", "wmom"), wmom_fwhm=(0.4, 0.6),
                 preview_selection=True)            # mag_range=(18, 22), max_objects=5000
-plot_size_mag(t, algorithm="gauss")                # size T [pix²] vs catalog magnitude
+plot_size_mag(t, algorithm="gauss")                # size T [arcsec²] vs catalog magnitude
 plot_size_mag(t, algorithm="wmom_0.4", mag="measured", size="sigma")
 plot_size_mag(t)                                   # the catalog's own size (r50)
 ```
@@ -258,7 +231,7 @@ plot_size_mag(t)                                   # the catalog's own size (r50
   `t.meta["n_measured"]`).
 - **Table** (one row per measured detection): `id`, `x`, `y` (1-based), `flux_cat` [DN/s],
   `mag`, `size_cat` [pix], `clean`, and per algorithm label `<a>` (`gauss`, `wmom_0.4`, ...):
-  `T_<a>` [pix², = Mxx + Myy], `sigma_<a>` [pix, det(M)^¼], `e1_<a>`, `e2_<a>` (distortion,
+  `T_<a>` [arcsec², = Mxx + Myy], `sigma_<a>` [arcsec, det(M)^¼], `e1_<a>`, `e2_<a>` (distortion,
   world axes), `flux_<a>` [DN/s], `mag_<a>` (`ABZP` − 2.5 log10 flux; instrumental without
   `ABZP`), `flag_<a>` (1 failure, 2 negative flux, 4 centroid > 1″, 8 exception). Measured
   about the catalog position, conventions of `psf_fomo.moments`.
@@ -269,7 +242,7 @@ plot_size_mag(t)                                   # the catalog's own size (r50
 - **`preview_selection=True`** runs the catalog's Piff selection (selection type, then the
   cuts; no reserve, no fit) and adds `candidate` and `star`: the same choice a `DataFit` with
   this catalog makes. With `mag_range` / `max_objects` the selection sees only that subset
-  (fewer neighbours for `min_sep`, a different locus for SizeMag). Each stage is reported as
+  (fewer neighbors for `min_sep`, a different locus for SizeMag). Each stage is reported as
   it is: if the cuts reject every candidate, `candidate` still shows them (with a warning;
   a fit would stop there), and `t.meta` holds `n_candidates`, `n_stars`, the selection and
   the cuts. `algorithms=()` runs the preview alone (fast); `verbose=2` prints Piff's log,
@@ -307,17 +280,17 @@ Steps; each star ends with one `reason`:
 
 1. `flagged`: the size measurement failed, or size / magnitude not finite.
 2. `faint`: fainter than `mag_max` (optional, default none).
-3. **Locus centre**: log(size) fitted as a polynomial of order `order` in the normalised SCA
+3. **Locus center**: log(size) fitted as a polynomial of order `order` in the normalized SCA
    position (0 constant; **1 plane, default**; 2 quadratic), with clipping at `k` × width
    around the median residual (so a few large outliers cannot drag the fit off a tight locus;
    if clipping leaves fewer stars than polynomial terms, a clear error).
-   The PSF size varies across an SCA; a field-dependent centre keeps the band equally fair
-   everywhere (a constant centre with a tight band cuts stars where the PSF is larger).
-   Residual = size / centre(x, y) − 1; **width** = robust σ (1.4826 × MAD) of the residuals
+   The PSF size varies across an SCA; a field-dependent center keeps the band equally fair
+   everywhere (a constant center with a tight band cuts stars where the PSF is larger).
+   Residual = size / center(x, y) − 1; **width** = robust σ (1.4826 × MAD) of the residuals
    of all usable stars.
 4. `saturated`: the saturation turn, detected from the data as a *change* of the locus with
    magnitude. Residuals binned in magnitude (`mag_bin` = 0.25); reference level = the median
-   of the bin medians (a constant offset between the fitted centre and the bin medians, e.g.
+   of the bin medians (a constant offset between the fitted center and the bin medians, e.g.
    from a skewed size distribution, cancels). A bin with ≥ `min_bin_count` (3) stars deviates
    when its median differs from the reference by more than `sat_sigma` (3) × its uncertainty
    (1.2533 × width / √n) **and** by at least `min_shift` (1) × the locus width (real
@@ -327,7 +300,7 @@ Steps; each star ends with one `reason`:
    on a flat faint end this is the first departure seen scanning from faint to bright. A turn
    that would mark more than half of the usable stars is **not applied**
    (`bright_limit_source = "unclear"`, a warning; `detected_limit` keeps it). `bright_limit=
-   <mag>` sets the limit by hand. The centre is refitted without the saturated stars.
+   <mag>` sets the limit by hand. The center is refitted without the saturated stars.
 5. `off_locus`: |residual| > `k` × width (**k = 3**: keeps 99.7 % of a Gaussian locus, so only
    clear outliers go: binaries, blends, a galaxy among the matches). `summary
    ["off_locus_fraction"]` should be ≈ 0.3 % plus the real outliers; much more means the
@@ -352,10 +325,10 @@ module, comparisons `'data'` and `'model_os'` only), `set_verbose(level)`,
 `set_attitude(False | "auto" | True)` (experimental, off by default); `run(save_to=None)`
 (without a folder nothing is kept on disk: Piff's inputs go to a temporary folder, the
 result works in memory but cannot be reloaded); `initialize(save_to=None)` (Piff's
-initialisation only, for a reference optimum without a fit; see "Reference optimum").
+initialization only, for a reference optimum without a fit; see "Reference optimum").
 
 `run` (one exposure, one SCA):
-1. image checks: `check_weights`, `check_orientation` (raises on a mirrored frame),
+1. image checks: `check_weights`, `check_orientation` (warns on a mirrored frame),
    `check_finite`, and whether the telescope attitude is used (below);
 2. writes `catalog.fits` and `piff.yaml` (full Piff config; also runs with `piffify`, which
    uses one shape method for selection and fit);
@@ -366,9 +339,9 @@ initialisation only, for a reference optimum without a fit; see "Reference optim
 
 ### Star SEDs (chromatic model)
 
-Piff's RomanOptics is chromatic by default (`FitConfig` leaves Piff's default unless you
-`set_optics(..., chromatic=False)`): the PSF is integrated over the bandpass with each
-star's SED. A detection catalog has no SEDs, so one SED is assumed for every star:
+With `set_optics(..., chromatic=True)` (`FitConfig` is monochromatic by default; a chromatic
+RomanOptics must be the whole model, see `piffval.md`) the PSF is integrated over the
+bandpass with each star's SED. A detection catalog has no SEDs, so one SED is assumed for every star:
 `set_sed("flat")` (default, constant photons per unit wavelength), an SED file
 (`set_sed("my_sed.dat", wave_type="nm", flux_type="flambda")`), or a spectral `galsim.SED`
 (sampled every 0.5 nm over the filter). `run` writes it as `sed.fits` next to the Piff
@@ -396,16 +369,14 @@ When enabled, with a RomanOptics model, `DataFit` writes the image's attitude
   is missing).
 - `set_attitude(True)`: required; `run` raises before doing anything if it cannot be used.
 
-`res.checks["attitude"]` records `requested`, `used` and the `values` passed. The flipped
-working copy is still needed: GalSim evaluates the aberrations at `SCA_pos` in its own frame
-and, with an attitude, finds the star's sky position from the same position through the WCS.
+`res.checks["attitude"]` records `requested`, `used` and the `values` passed.
 
 ## Results (`DataFitResult`)
 
 **Star table** (`res.table`): `sca`, `star_id`, `x`, `y` (1-based), `phase_x`, `phase_y`,
 `mag`, `flux_cat` [DN/s], `gain`, `reserve`, `flag`, `flux` (fitted, DN/s), `flux_cat_r` =
 fitted / catalog flux (a Kron flux misses light: not expected to be 1), `model_flux`, `du`,
-`dv` [arcsec], `dx`, `dy` [pix] (fitted centre − catalog position, not an error), `chisq`,
+`dv` [arcsec], `dx`, `dy` [pix] (fitted center − catalog position, not an error), `chisq`,
 `dof`, `chisq_dof`, `sky_resid` [DN/s] (median unmasked stamp-edge pixel after the sky
 subtraction: an offset means a wrong sky level, a trend across the SCA a gradient).
 
@@ -417,20 +388,20 @@ stamp), `n_candidates` (picked by the selection type).
 `candidate`, `star` for every detection; `plot_size_mag()` shows them on the catalog's size
 vs magnitude (measured sizes: `StarCatalog.measure`, above).
 
-**Moments**: `'data'` rows (data stamp and model stamp at the fitted flux and centre, both
+**Moments**: `'data'` rows (data stamp and model stamp at the fitted flux and center, both
 measured about the catalog position; residuals model − data) and `'model_os'` rows (the
-model alone, oversampled; `*_ref` NaN). `moment_summary()` summarises dT/T, de1, de2 (data);
+model alone, oversampled; `*_ref` NaN). `moment_summary()` summarizes dT/T, de1, de2 (data);
 for the model use `moment_summary(columns=("T_model", "e1_model", "e2_model"))`.
 `model_moments(...)` and `piffval.compare_fits(...)` as in `docs/piffval.md`.
 
 **Plots**: `plot_size_mag`, `plot_mean_images(which)`, `plot_chi2_radius`,
-`plot_moment_residuals`, `plot_field(column, comparison, algorithm)`, `plot_components(kind)`,
+`plot_moment_residuals`, `plot_field(column, comparison, algorithm)`, `plot_components(kind)`, `plot_component_images()`,
 `plot_zernikes`, `plot_rho`.
 
 ## Reference optimum (`res.reference()`)
 
 The joint χ² optimum of the same Piff model on the same stars (`psf_fomo.reference`,
-`docs/piffval.md`), to tell optimiser limits (Piff above the optimum of its own model) from model
+`docs/piffval.md`), to tell optimizer limits (Piff above the optimum of its own model) from model
 limits (the optimum itself leaves χ²/dof above 1, or its moments differ from the data's).
 
 ```python
@@ -441,28 +412,28 @@ comparison_table({"Piff": res, "Piff, profiled": out["given"],
                  comparison="data", algorithm="gauss")
 ```
 
-- **Centres** are held at Piff's fitted centres (`centers="fitted"`, default); real data has
+- **Centers** are held at Piff's fitted centers (`centers="fitted"`, default); real data has
   no true positions. `centers="catalog"` holds them at the detection-catalog positions (a
-  measurement, not the truth). Fluxes are profiled. Piff also fits centres, so the reference
+  measurement, not the truth). Fluxes are profiled. Piff also fits centers, so the reference
   χ² is an upper bound on the optimum of Piff's problem.
-- `out["given"]` is Piff's solution with those centres and profiled fluxes, on the
+- `out["given"]` is Piff's solution with those centers and profiled fluxes, on the
   reference's χ² and dof (weighted pixels of fit stars − fit stars − free coefficients);
   compare Piff with the optimum through it. `out["optimum"][start]` are the optima
   (`converged` False when scipy stopped at `max_nfev`).
 - Each solution (`ReferenceResult`) carries the real-data star table, components (no truth)
   and moments (`'data'`, `'model_os'`, with the fit's diagnostics settings by default).
-- **Speed.** The optimisation draws only the fit stars. Each reported solution is drawn once
+- **Speed.** The optimization draws only the fit stars. Each reported solution is drawn once
   for all stars (`report="all"`, default) and its moments computed. With a large reserve
   fraction most of the time goes there: `res.reference(starts=("zero",), report="fit",
   given=False, moments=None)` draws only the fit stars, once per evaluation step, and skips
   Piff's solution; compute moments afterwards for the solution you keep.
 - Parameters, frozen components, starts and cost as for simulations (`docs/piffval.md`).
   `DataReferenceSolver` (in `psf_fomo.datafit`) is the solver; it differs from the
-  simulation one only in the held centres and the truth-free diagnostics.
-- **Weights and centres** are held during an optimisation. With model Poisson weights they
+  simulation one only in the held centers and the truth-free diagnostics.
+- **Weights and centers** are held during an optimization. With model Poisson weights they
   depend on the model, which Piff updates after each iteration. `refresh=k` repeats that
   update at the optimum k times (model at the profiled flux → `Star.addPoisson` → Piff's
-  reflux of flux and centre), each followed by a new optimisation from the optimum
+  reflux of flux and center), each followed by a new optimization from the optimum
   (iteratively reweighted least squares, the fixed point Piff converges to). Default: 0 after
   a Piff fit (its stars carry its last update), 2 after `DataFit.initialize`. Each optimum's
   `summary["rounds"]` lists per round `chisq_dof` (on that round's weights), `nfev`,
@@ -481,23 +452,23 @@ best.summary["rounds"]                      # convergence of the refresh rounds
 Input, Select, the PSF), then what Piff's fit does before its first iteration
 (`initialize_flux_center`, `initialize_params`, one reflux; a `Mean` interpolator, which
 Piff leaves unsolved until its first iteration, is solved on the fit stars' initial parameters
-so the model can be saved, as `Polynomial` already is at initialisation) and its per-iteration
+so the model can be saved, as `Polynomial` already is at initialization) and its per-iteration
 Poisson
 update with the initial model (Poisson variance added, reflux). No Piff iteration and no
 moments (`init.compute_moments(...)` if wanted). The result is a `DataFitResult` with
 `fit_summary["initialized_only"]` True, `niter` 0, `converged` False. With `save_to` it is
 saved like a fit and reloads with `load_data_fit`; without, Piff's inputs go to a temporary
 folder that is removed (the stars stay in memory). The reference then defaults to
-`refresh=2`, so its weights and centres end up those of its own optimum, not of the initial
+`refresh=2`, so its weights and centers end up those of its own optimum, not of the initial
 model.
 
-**Saved folder**: `catalog.fits`, `piff.yaml`, `image_galsim_frame.fits` (the image flipped
-into GalSim's frame, for `frame="science"`; the size of your file), `detections.fits` (only
+**Saved folder**: `catalog.fits`, `piff.yaml`, `image_cleaned.fits` (only if the image has
+non-finite pixels; the size of your file), `detections.fits` (only
 for a catalog given as a table), `psf.fits` (Piff), `stars.fits`,
 `selection.fits`, `moments.fits`, `config.yaml` (run settings incl. the Piff config, fit
-summary, checks, provenance). `load_data_fit(path)` reloads: the catalog and (for
-`frame="science"`) the working copy come from the folder, so it can be moved; a
-`frame="galsim"` image must still be at its recorded path. Stamps are re-cut with Piff's Input and the fits attached; Piff's
+summary, checks, provenance). `load_data_fit(path)` reloads: the catalog and the cleaned
+copy (if any) come from the folder; otherwise the image must still be at its recorded path.
+Stamps are re-cut with Piff's Input and the fits attached; Piff's
 `max_snr_weight` scaling is re-applied from the saved `snr` / `raw_snr`; with model Poisson
 weights the Poisson term is re-added from the final model (Piff's last update preceded its
 final reflux, so weights agree to ~1 %, not exactly).
@@ -507,6 +478,6 @@ final reflux, so weights agree to ~1 %, not exactly).
 - One SED for all stars (`set_sed`, flat by default); real stars' SEDs differ.
 - No truth: model quality is judged by reserve-star residuals, χ², model − model comparisons,
   and the reference optimum.
-- The sky is one number per detector; gradients are not modelled.
+- The sky is one number per detector; gradients are not modeled.
 - `getWCS` in `check_orientation` uses a fixed observable pointing (not the image's): parity
   and scale are independent of it, the reported rotation weakly dependent.

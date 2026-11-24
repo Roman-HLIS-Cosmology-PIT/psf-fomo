@@ -86,7 +86,7 @@ def test_model_moments_constant_model(fit):
     assert len(mm) == 9 and set(mm["algorithm"]) == {"hsm"}
     m = moment_residuals(psf, stars, table, sim, native=(), comparisons=("model_os",))
     np.testing.assert_allclose(mm["T"], m["T_model"][0], rtol=1e-8)
-    T_expected = 2 * (0.15 / PIX) ** 2 + 2 / 12  # Gaussian + pixel, round-ish
+    T_expected = 2 * 0.15**2 + 2 / 12 * PIX**2  # Gaussian + pixel, round-ish, arcsec²
     np.testing.assert_allclose(mm["T"], T_expected, rtol=0.02)
 
 

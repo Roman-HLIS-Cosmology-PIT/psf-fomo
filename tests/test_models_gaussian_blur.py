@@ -117,8 +117,16 @@ def test_component_image_at_zero_blur(synthetic_stars):
     psf = kernel_psf(max_iter=1, min_iter=1)
     psf.fit(stars, logger=make_logger(0)[0])
     leaf = leaf_psfs(psf)[1]
-    image = component_image(psf, leaf, 1000.0, 1000.0, sca=1, oversample=3, size=7)
-    np.testing.assert_allclose(image.array.sum(), 1.0, atol=1e-3)
+    for oversample, include_pixel in ((3, False), (3, True), (1, True)):
+        image = component_image(psf, leaf, 1000.0, 1000.0, sca=1, oversample=oversample,
+                                size=7, include_pixel=include_pixel)
+        # Unit flux whether integrated over image pixels or convolved with the native pixel,
+        # and no negative values (a Gaussian is positive; an FFT of the pixel would ring).
+        np.testing.assert_allclose(image.array.sum(), 1.0, atol=2e-3)
+        assert image.array.min() >= -1e-8
+    # With the native pixel, a zero blur is the pixel itself: flat over the central pixel.
+    native = component_image(psf, leaf, 1000.0, 1000.0, sca=1, oversample=1, size=7).array
+    assert native[3, 3] > 0.99 and native.sum() - native[3, 3] < 0.01
 
 
 def test_reference_recovers_blur(synthetic_stars):

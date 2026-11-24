@@ -34,7 +34,7 @@ res.moment_summary()     # dT/T, de1, de2 per (set, comparison, algorithm)
 res.components()         # {'optics': Zernikes vs truth, 'kernel': M vs truth, 'pixelgrid': ...}
 res.plot_mean_images(oversampled=True); res.plot_chi2_radius()
 res.plot_moment_residuals("truth_os"); res.plot_field("dT_T", "truth_os", "hsm")
-res.plot_components("kernel"); res.plot_zernikes()
+res.plot_components("kernel"); res.plot_component_images(); res.plot_zernikes()
 same = load_fit("out/fit01", sim=sim)   # sim needed for images / new moments / components
 ```
 
@@ -45,21 +45,23 @@ Generated Piff structure (pieces left out when not requested):
 
 | method | what | default |
 |---|---|---|
-| `set_optics(mode, max_zernike, prior_sigma, aberration_interp, nominal_interp, chromatic)` | `'free'`: Z4…Z_max fitted per SCA, Gaussian prior toward 0 of width `prior_sigma` waves (scalar, one per Zernike, or None = no prior). `'pinned'`: held at 0 (nominal optics) by σ = 1e-10 on Z4 only. `chromatic`: None = Piff's default (True), or True / False | free, Z4–Z22, 0.05, constant, bilinear, Piff's chromatic default |
+| `set_optics(mode, max_zernike, prior_sigma, aberration_interp, nominal_interp, chromatic)` | `'free'`: Z4…Z_max fitted per SCA, Gaussian prior toward 0 of width `prior_sigma` waves (scalar, one per Zernike, or None = no prior). `'pinned'`: held at 0 (nominal optics) by σ = 1e-10 on Z4 only. `chromatic`: False, True, or None = Piff's default (True); True only for RomanOptics alone | free, Z4–Z22, 0.05, constant, bilinear, monochromatic |
 | `set_mtf(on)` | fixed `GaussianMixture` with the simulation's MTF constants ([conventions](conventions.md#simulated-psf-truth); sigmas in arcsec), `interp: Fixed`; cannot be fitted | on |
-| `add_kernel(kind, order, init, max_nfev, interp)` | `'signed'`: our `GaussianMoments` (M in pix², either sign, flux and centre fixed in its fit); `'blur'`: Piff `GaussianBlur` (broadens only, see below); `'gaussian'`: Piff `Gaussian` (its fit also moves flux and centre); interpolator of `order`, `interp='Polynomial'` or (blur only) `'BasisPolynomial'` | none |
+| `add_kernel(kind, order, init, max_nfev, interp)` | `'signed'`: our `GaussianMoments` (M in pix², either sign, flux and center fixed in its fit); `'blur'`: Piff `GaussianBlur` (broadens only, see below); `'gaussian'`: Piff `Gaussian` (its fit also moves flux and center); interpolator of `order`, `interp='Polynomial'` or (blur only) `'BasisPolynomial'` | none |
 | `add_pixelgrid(size, scale, order, interp, centered, init)` | `PixelGrid` in a Sum, `BasisPolynomial` | none |
 | `set_outliers(chisq_nsigma, max_remove, max_centroid)` | Piff `Chisq` / `Centroid` (arcsec) | none |
 | `set_iterations(max_iter, min_iter, chisq_thresh)` | Piff fit loop | 30, 2, 0.1 |
 | `set_piff_shape_method(method, weight_fwhm)` | Piff's global shape method during the fit (PixelGrid / GSObject init, Piff stats); restored afterwards | `'hsm'` |
 | `FitConfig.from_piff_config(dict)` | use a hand-written Piff `psf` dict as is | — |
 
-**Chromatic model.** `FitConfig` does not set RomanOptics' `chromatic` option unless you do
-(`set_optics(..., chromatic=False)` or `True`), so Piff's default applies: chromatic, i.e.
-the PSF integrated over the bandpass with each star's SED. The simulated stars carry the
-simulation's SED (in memory, and through `sed.fits` in file-based runs). A monochromatic
-simulation (`set_chromatic(None)`) has no SEDs: fit it with `set_optics(...,
-chromatic=False)` (`run` raises otherwise). Oversampled model images (`'truth_os'`,
+**Chromatic model.** `FitConfig` fits a monochromatic RomanOptics by default
+(`set_optics(..., chromatic=False)`: the PSF at the filter's effective wavelength), also for
+chromatic simulations. `chromatic=True` (or None, Piff's default) integrates the PSF over the
+bandpass with each star's SED; Piff draws such a model only when RomanOptics is the whole
+model, so it needs `set_mtf(False)` and no kernel or PixelGrid (`piff_config` raises
+otherwise). The simulated stars carry the simulation's SED (in memory, and through
+`sed.fits` in file-based runs); a monochromatic simulation (`set_chromatic(None)`) has none
+and can only be fitted with `chromatic=False`. Oversampled model images (`'truth_os'`,
 `'model_os'`, `model_moments`, `plot_components`) of a chromatic model are drawn with the
 fit's SED, as Piff draws stars. `piff_config(filter_name)` returns the Piff dict; `to_yaml`
 / `from_yaml` round-trip the settings.
@@ -70,7 +72,7 @@ sum of four tiny Gaussians with moments exactly M of any sign (linear in M, firs
 accurate, starts at 0), so it can both broaden and sharpen. Stars whose per-star fit stops at
 `max_nfev` are counted (`fit_summary["kernel_max_nfev"]`). Importing `psf_fomo.models`
 registers it with Piff; re-importing is safe. Its former `signed=False` mode (a PSD-clipped
-Gaussian, kernel kind `'positive'`) was removed in favour of Piff's `GaussianBlur`; settings or
+Gaussian, kernel kind `'positive'`) was removed in favor of Piff's `GaussianBlur`; settings or
 Piff files that use it no longer load.
 
 ### `GaussianBlur` (Piff)
@@ -104,7 +106,7 @@ and meanings as `StarCatalog.set_cuts` for real data (one builder,
   wings; random placement has no minimum distance), and `max_snr_weight` = 0 (no S/N cap;
   Piff's own default of 100 would down-weight every bright star). `set_cuts(None)` turns
   every cut off.
-- Applied to **each observation separately**: a neighbour counts only in the same exposure.
+- Applied to **each observation separately**: a neighbor counts only in the same exposure.
 - In memory the cuts run through Piff's own code (`Select.rejectStars`); file-based runs
   write them into `piff.yaml`. Both keep the same stars. As in Piff, stars with a `gain`
   property (star shot noise simulated) get their Poisson variance added at this step.
@@ -117,19 +119,19 @@ and meanings as `StarCatalog.set_cuts` for real data (one builder,
 `obs`, `sca`, `star_id`, `x`, `y`, `phase_x`, `phase_y`, `mag`, `reserve`, `flag`
 (1 = flagged by Piff), `flux` (fitted, ADU), `flux_true` (catalog e⁻ / gain), `flux_r`,
 `model_flux` (total flux of the unit model), `flux_tot_r` = `flux_r` × `model_flux`,
-`du`, `dv` (fitted centre, arcsec), `dx`, `dy` (pix), `chisq`, `dof` (Piff: pixels − 3),
+`du`, `dv` (fitted center, arcsec), `dx`, `dy` (pix), `chisq`, `dof` (Piff: pixels − 3),
 `chisq_dof`.
 
 ## Moment residuals (`res.moments`, `psf_fomo.piffval.residuals`)
 Set with `set_diagnostics(moments, native, wmom_fwhm, oversampled, oversample, include_pixel,
 comparisons)`; defaults: native wmom 0.4″ + gauss, oversampled hsm, ×5, effective PSF, all
 three comparisons. Any of Piff's `hsm`, `am`, `gauss`, `wmom` (several FWHMs) can be listed;
-each gives its own rows. Conventions as `psf_fomo.moments` (T = Mxx + Myy in pix², distortion
+each gives its own rows. Conventions as `psf_fomo.moments` (T = Mxx + Myy in arcsec², distortion
 e, world axes).
 
 | comparison | reference | model |
 |---|---|---|
-| `data` | noisy data stamp | model at the fitted flux and centre, same stamp; both measured about the catalog position (as wmom needs; Piff's own stats measure about the fitted centre instead) |
+| `data` | noisy data stamp | model at the fitted flux and center, same stamp; both measured about the catalog position (as wmom needs; Piff's own stats measure about the fitted center instead) |
 | `truth_native` | noiseless truth stamp (`render_stamp`) | model at the true position and flux; isolates model error from noise |
 | `truth_os` | oversampled truth (`truth_psf`, effective PSF) | model on the same fine grid: `'auto'` profiles convolved with the native pixel once, `'no_pixel'` ones (PixelGrid) as they are |
 | `model_os` (opt-in) | none (`*_ref` and residuals NaN) | the model alone on the oversampled grid, same convention as `truth_os`; needs no truth |
@@ -141,7 +143,7 @@ with the `oversampled` algorithms. Plot it with `plot_field(res, "T_model", "mod
 ### Model moments anywhere, and model − model comparisons
 - `res.model_moments(n_grid=5, x=None, y=None, algorithms=("hsm",), wmom_fwhm=(0.4,),
   oversample=5, include_pixel=True, size=25)`: oversampled model moments at given SCA positions
-  (native pixels) or at the centres of an `n_grid` × `n_grid` grid of cells; one row per
+  (native pixels) or at the centers of an `n_grid` × `n_grid` grid of cells; one row per
   position × algorithm (`x`, `y`, `algorithm`, T, e1, e2, g1, g2, sigma, du, dv, flux, `flag`).
   No simulation needed.
 - `compare_fits({"PG": res1, "signed+PG": res2, ...}, x=None, y=None, algorithms=("hsm",))`
@@ -157,7 +159,7 @@ calibrations (e.g. wmom scaled by gauss) can be done from the table.
 
 ## Shared with real-data fits
 `psf_fomo.piffval.fitting` holds the truth-free pieces of a fit (logger and convergence
-watch, `piff_shape_method`, `choose_reserve`, `fit_columns` = per-star flux / centre / χ²,
+watch, `piff_shape_method`, `choose_reserve`, `fit_columns` = per-star flux / center / χ²,
 `fit_summary`); `residuals` the truth-free moments (`'data'`, `'model_os'`, `model_moments`,
 `compare_fits`); `components(..., truth=False)` gives fitted values without truth columns.
 The real-data package `psf_fomo.datafit` uses these and `FitConfig`; nothing in it depends on
@@ -176,7 +178,12 @@ The real-data package `psf_fomo.datafit` uses these and `FitConfig`; nothing in 
 `plot_mean_images(which, oversampled)` (mean data / model / residual; oversampled truth /
 model / residual), `plot_chi2_radius`, `plot_moment_residuals(comparison, algorithms)`
 (histograms, fit vs reserve), `plot_field(column, comparison, algorithm)` (values across the
-SCA), `plot_components(kind)` (a component at 3 × 3 SCA positions), `plot_zernikes`.
+SCA), `plot_components(kind, include_pixel=True)` (a component at 3 × 3 SCA positions),
+`plot_component_images(x, y, size=9, oversample=5, include_pixel=True)` (every component
+alone at one position, default the SCA center: native and oversampled rows), `plot_zernikes`.
+Component images (`components.component_image`) are convolved with the native pixel
+response by default, i.e. what each component contributes to the effective PSF;
+`include_pixel=False` shows them before it (a PixelGrid always contains it).
 `which` = `'fit'` (default), `'reserve'`, `'all'`; Piff-flagged stars are left out.
 
 ## File-based runs (`run(mode="files")`)
@@ -201,19 +208,19 @@ command (it imports `psf_fomo.models`).
 max_sep=10, bin_size=0.5)` → table of ρ1 … ρ5 (ξ+, error, ξ−, npairs, `n_used`) per
 algorithm; `res.plot_rho(table)`. Piff's `RhoStats` with the per-star measurement replaced by
 the chosen algorithm (the global shape method is not changed). Data and model are measured
-about the fitted centre (Piff's behaviour). Data vs model at the fitted flux and centre, reduced shear g, T in arcsec²,
+about the fitted center (Piff's behavior). Data vs model at the fitted flux and center, reduced shear g, T in arcsec²,
 separations in arcmin (one SCA ≈ 7.5′). Needs `treecorr`. τ statistics are not included.
 
 ## Reference optimum (`psf_fomo.reference`)
 The joint χ² optimum of the *same* Piff model (every image drawn by Piff's `psf.drawStar`),
-to tell optimiser limitations (Piff above the optimum of its own model) from model
+to tell optimizer limitations (Piff above the optimum of its own model) from model
 limitations (the optimum itself biased or with excess χ²).
 
 ```python
 out = res.reference(starts=("given", "zero"), max_nfev=50)   # from a Piff fit
 from psf_fomo.reference import reference_from_config, comparison_table
 out0 = reference_from_config(pv, starts=("zero",))          # no Piff fit, only Piff's init
-comparison_table({"Piff": res, "Piff, true centres": out["given"],
+comparison_table({"Piff": res, "Piff, true centers": out["given"],
                   **{f"optimum ({k})": v for k, v in out["optimum"].items()}})
 ```
 
@@ -221,15 +228,15 @@ comparison_table({"Piff": res, "Piff, true centres": out["given"],
   polynomials with the interpolator's own terms (`Polynomial`, `BasisPolynomial`; `Mean` =
   constant). Frozen: `Fixed` components, pinned optics, and kinds listed in `freeze`
   (`'optics'`, `'kernel'`, `'pixelgrid'`).
-- Fluxes profiled in closed form, centres held at the truth (`ReferenceSolver(...,
-  centers="catalog")`, default; `centers="fitted"` holds Piff's fitted centres instead, the
+- Fluxes profiled in closed form, centers held at the truth (`ReferenceSolver(...,
+  centers="catalog")`, default; `centers="fitted"` holds Piff's fitted centers instead, the
   default for real data, `docs/datafit.md`): the reference χ² is an upper bound on the true
   optimum of Piff's problem.
 - `comparison_table` columns: `label`, `chisq`, `chisq_dof`, `flux_r`, `flux_tot_r` (NaN for
   real data), `flux_cat_r` (when a real-data result is included), moment residuals of the
-  chosen comparison and algorithm, `n_moments`, `converged`. A centred PixelGrid is optimised over the full
+  chosen comparison and algorithm, `n_moments`, `converged`. A centered PixelGrid is optimized over the full
   grid. Only fit stars (not reserve, not flagged) enter χ², and only they are drawn during
-  the optimisation; reserve stars are drawn once per reported solution.
+  the optimization; reserve stars are drawn once per reported solution.
 - Speed options of `solve` / `res.reference` / `reference_from_config`: `report="all"`
   (default; reported solutions include reserve stars) or `"fit"` (only the fit stars: no
   reserve diagnostics, much faster when most stars are reserve); `given=False` skips the
@@ -237,7 +244,7 @@ comparison_table({"Piff": res, "Piff, true centres": out["given"],
   model draws.
 - dof = weighted pixels of fit stars − fit stars − free coefficients (Piff: pixels − 3 per
   star). Compare Piff with the optimum through `out["given"]` (Piff's parameters with true
-  centres and profiled fluxes, same dof).
+  centers and profiled fluxes, same dof).
 - Starts: `'given'` (the stars' parameters) and `'zero'` (kernels and grids at zero; optics
   and Piff Gaussians at their given values). The same χ² from both is evidence of the global
   optimum. `converged` is False when scipy stopped at `max_nfev`.

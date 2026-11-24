@@ -9,7 +9,7 @@ Example
 >>> stars, rows = result.stars(sca=1)
 
 Every random draw comes from a numpy generator seeded by (seed, obs, sca, purpose), so each
-star, error value and noise realisation can be regenerated exactly from the configuration.
+star, error value and noise realization can be regenerated exactly from the configuration.
 """
 import copy
 import shutil
@@ -124,7 +124,7 @@ class RomanSimulation:
         kind : {'random', 'grid'}
             Continuous random positions, or an evenly spaced grid with random sub-pixel phases.
         phase : tuple of float, optional
-            Fixed sub-pixel phase (fx, fy), each in [-0.5, 0.5]; (0, 0) = pixel centres.
+            Fixed sub-pixel phase (fx, fy), each in [-0.5, 0.5]; (0, 0) = pixel centers.
             Default None (random).
         edge_margin : float, optional
             Native pixels kept clear of the SCA edges. Default None = ``render_size // 2 + 1``
@@ -351,19 +351,32 @@ class RomanSimulation:
 
         Parameters
         ----------
-        kind : {'gaussian', 'roman'}
-            Gaussian noise of standard deviation ``sigma``, or Roman noise and detector effects.
+        kind : {'gaussian', 'roman-L1', 'roman-L2'}
+            Gaussian noise of standard deviation ``sigma``, or Roman noise and detector
+            effects: ``'roman-L1'`` applies every effect uncorrected; ``'roman-L2'`` leaves
+            out what L1 → L2 processing corrects (nonlinearity, IPC) and the quantization
+            (see `psf_fomo.sim.noise`).
         sigma : float
             Gaussian noise in e⁻ per pixel (> 0). Default 1.
         effects : sequence of str, optional
-            Roman effects to apply (subset of ``noise.ROMAN_EFFECTS``). Default: all.
+            Roman effects to apply (subset of ``noise.ROMAN_EFFECTS``). Default: the kind's
+            own set, ``noise.ROMAN_L1_EFFECTS`` (all) or ``noise.ROMAN_L2_EFFECTS`` (sky,
+            poisson, reciprocity, dark, read).
+
+        Examples
+        --------
+        >>> sim.set_noise("roman-L2")                              # L2-like image
+        >>> sim.set_noise("roman-L2", effects=["sky", "poisson", "read"])
         """
         if kind == "gaussian":
             if sigma <= 0:
                 raise ValueError("sigma must be > 0")
             self.config["noise"] = {"kind": kind, "sigma": float(sigma)}
         elif kind == "roman":
-            effects = list(noise_mod.ROMAN_EFFECTS if effects is None else effects)
+            raise ValueError("kind 'roman' is now 'roman-L1' (every effect) or 'roman-L2' "
+                             "(the effects left in L2 images)")
+        elif kind in noise_mod.ROMAN_KINDS:
+            effects = list(noise_mod.ROMAN_KINDS[kind] if effects is None else effects)
             unknown = set(effects) - set(noise_mod.ROMAN_EFFECTS)
             if unknown:
                 raise ValueError(f"unknown effects {sorted(unknown)}; "
@@ -372,7 +385,7 @@ class RomanSimulation:
                 raise ValueError("Roman noise needs at least one of 'read', 'poisson', 'dark'")
             self.config["noise"] = {"kind": kind, "effects": effects}
         else:
-            raise ValueError("kind must be 'gaussian' or 'roman'")
+            raise ValueError("kind must be 'gaussian', 'roman-L1' or 'roman-L2'")
 
     def set_wcs(self, kind="simple", ra=DEFAULT_RA, dec=DEFAULT_DEC, pa=None, date=None):
         """Set the WCS.
@@ -447,6 +460,7 @@ class RomanSimulation:
                   stamp_size=config["stamp_size"], render_size=config["render_size"],
                   max_zernike=config["max_zernike"])
         sim.config = copy.deepcopy(config)
+        sim.config["noise"] = noise_mod.upgrade_noise_config(sim.config["noise"])
         return sim
 
     @classmethod
@@ -607,7 +621,7 @@ class Simulation:
         return patch[_stamp_bounds(pos, size or self.config["stamp_size"])]
 
     def truth_psf(self, sca, obs, star_id, oversample=5, include_pixel=True, size=None):
-        """The truth PSF of one star on a finer grid, unit flux, centred on the image.
+        """The truth PSF of one star on a finer grid, unit flux, centered on the image.
 
         Parameters
         ----------
@@ -729,6 +743,7 @@ def load_simulation(path):
     path = Path(path)
     saved = read_yaml(path / "config.yaml")
     config = saved["config"]
+    config["noise"] = noise_mod.upgrade_noise_config(config["noise"])
     chromatic = config["chromatic"]
     if chromatic is not None and chromatic["sed"] not in ("flat", "table"):
         chromatic["sed"] = str(path / chromatic["sed"])
@@ -997,7 +1012,7 @@ class _Truth:
 
 
 def _make_sed(chromatic, bandpass):
-    """The SED shared by all stars, normalised to unit flux in the bandpass (or None)."""
+    """The SED shared by all stars, normalized to unit flux in the bandpass (or None)."""
     if chromatic is None:
         return None
     return storage.sed_from_setting(chromatic).withFlux(1.0, bandpass)

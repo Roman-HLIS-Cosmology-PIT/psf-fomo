@@ -59,13 +59,13 @@ def band_weights(bandpass, sed, waves):
     The PSF is taken as linear in wavelength between nodes (as GalSim's ``n_waves``
     interpolation), so the integral of PSF × bandpass × SED is Σ w_k PSF(λ_k) with
     w_k = ∫ h_k(λ) bandpass(λ) SED(λ) dλ, h_k the piecewise-linear "hat" function of node k.
-    Normalised to Σ w_k = 1 (a unit-flux PSF stays unit flux).
+    Normalized to Σ w_k = 1 (a unit-flux PSF stays unit flux).
 
     Parameters
     ----------
     bandpass : galsim.Bandpass
     sed : galsim.SED
-        Spectral SED (any normalisation).
+        Spectral SED (any normalization).
     waves : numpy.ndarray
         Nodes in nm, increasing, from the blue to the red limit.
 
@@ -97,7 +97,7 @@ def effective_profile(chromatic, sed, bandpass, n_waves, extent):
     chromatic : galsim.ChromaticObject
         Unit-flux chromatic PSF, world coordinates.
     sed : galsim.SED
-        The stars' SED (any normalisation).
+        The stars' SED (any normalization).
     bandpass : galsim.Bandpass
     n_waves : int or None
         Number of wavelength nodes; None = every `EXACT_STEP_NM` nm.
@@ -135,7 +135,7 @@ class TruthRomanModel(piff.roman.RomanOpticalModel):
     Parameters
     ----------
     sed : galsim.SED, optional
-        The stars' SED. Default None (Piff's behaviour).
+        The stars' SED. Default None (Piff's behavior).
     n_waves : int or None
         Wavelength nodes of the effective PSFs (see `effective_profile`). Default 5.
     extent : float
@@ -370,7 +370,7 @@ def gaussian_kernel(mxx, mxy, myy, pixel_scale=galsim.roman.pixel_scale):
 def random_walk_offsets(rms_mas, n_steps, rng):
     """Pointing offsets along a random-walk trajectory during an exposure.
 
-    The walk is re-centred on its mean (a mean offset only moves the star, it does not change
+    The walk is re-centered on its mean (a mean offset only moves the star, it does not change
     the PSF) and scaled so the RMS about the mean is exactly ``rms_mas`` in each axis.
 
     Parameters
@@ -408,7 +408,7 @@ def timeseries_offsets(t, dx_mas, dy_mas):
     Returns
     -------
     dx, dy : numpy.ndarray
-        Offsets in milliarcsec, re-centred on their time-weighted mean.
+        Offsets in milliarcsec, re-centered on their time-weighted mean.
     weights : numpy.ndarray
         Time weights from the sample spacing, summing to 1.
     """

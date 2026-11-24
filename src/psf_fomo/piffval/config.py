@@ -49,7 +49,7 @@ class FitConfig:
     through YAML (`to_yaml`, `from_yaml`).
 
     Defaults: free RomanOptics with Piff's defaults (Z4–Z22, prior σ 0.05 waves, constant per
-    SCA, bilinear, Piff's chromatic setting), fixed MTF on, no kernel, no PixelGrid, no outlier rejection, Piff's
+    SCA, bilinear) but monochromatic (``chromatic=False``), fixed MTF on, no kernel, no PixelGrid, no outlier rejection, Piff's
     iteration defaults (max_iter 30, min_iter 2, chisq_thresh 0.1), Piff's shape method
     ``'hsm'``.
     """
@@ -58,7 +58,7 @@ class FitConfig:
         self.config = {
             "optics": {"mode": "free", "max_zernike": 22, "prior_sigma": 0.05,
                        "aberration_interp": "constant", "nominal_interp": "bilinear",
-                       "chromatic": None},
+                       "chromatic": False},
             "mtf": True,
             "kernel": None,
             "pixelgrid": None,
@@ -69,7 +69,7 @@ class FitConfig:
         }
 
     def set_optics(self, mode="free", max_zernike=22, prior_sigma=0.05,
-                   aberration_interp="constant", nominal_interp="bilinear", chromatic=None):
+                   aberration_interp="constant", nominal_interp="bilinear", chromatic=False):
         """Configure the Piff ``RomanOptics`` component (always present).
 
         Parameters
@@ -91,9 +91,11 @@ class FitConfig:
             Piff option for the spatial interpolation of the sample-point PSFs. Use the same as
             the simulation (default ``'bilinear'``).
         chromatic : bool or None
-            Piff's ``chromatic`` option. None (default): not set, so Piff's default applies
-            (``True``: the PSF is integrated over the bandpass with each star's SED, which
-            every star must have). False: the PSF at the bandpass's effective wavelength.
+            Piff's ``chromatic`` option. False (default): the PSF at the bandpass's effective
+            wavelength. True: the PSF integrated over the bandpass with each star's SED (every
+            star needs one). None: not set, so Piff's default applies (True). Piff draws a
+            chromatic RomanOptics only when it is the whole model, so True (or None) needs
+            ``set_mtf(False)`` and no kernel or PixelGrid; `piff_config` raises otherwise.
         """
         if mode not in OPTICS_MODES:
             raise ValueError(f"mode must be one of {OPTICS_MODES}")
@@ -131,11 +133,11 @@ class FitConfig:
         Parameters
         ----------
         kind : {'signed', 'blur', 'gaussian'} or None
-            ``'signed'``: our ``GaussianMoments`` (M in pix², either sign, flux and centre
+            ``'signed'``: our ``GaussianMoments`` (M in pix², either sign, flux and center
             fixed in its per-star fit). ``'blur'``: Piff's ``GaussianBlur`` (``[ixx, iyy,
             ixy]`` in arcsec², projected onto PSD matrices so it can only broaden, flux and
-            centre fixed in its fit, starts at zero). ``'gaussian'``: Piff's ``Gaussian``
-            (scale, g1, g2; its per-star fit also moves flux and centre), ``init='delta'``.
+            center fixed in its fit, starts at zero). ``'gaussian'``: Piff's ``Gaussian``
+            (scale, g1, g2; its per-star fit also moves flux and center), ``init='delta'``.
         order : int
             Order of the interpolator in (u, v). Needs at least (order+1)(order+2)/2 stars.
             Default 0 (one kernel for the SCA).
@@ -145,7 +147,7 @@ class FitConfig:
         max_nfev : int
             ``GaussianMoments`` evaluations per star and iteration. Default 30.
         interp : {'Polynomial', 'BasisPolynomial'}
-            Interpolator. ``'BasisPolynomial'`` (joint linearised solve with Piff's line
+            Interpolator. ``'BasisPolynomial'`` (joint linearized solve with Piff's line
             search) only for ``'blur'``: the other kernels have no quadratic ``chisq``.
             Default ``'Polynomial'``.
         """
@@ -206,7 +208,7 @@ class FitConfig:
         max_remove : int or float, optional
             Chisq only: at most this many (or this fraction, if < 1) per iteration.
         max_centroid : float, optional
-            Reject stars whose fitted centre is more than this many arcsec from the catalog
+            Reject stars whose fitted center is more than this many arcsec from the catalog
             position.
 
         All None (default): no outlier rejection.
@@ -229,7 +231,7 @@ class FitConfig:
     def set_piff_shape_method(self, method="hsm", weight_fwhm=None):
         """Piff's global shape method during the fit.
 
-        Piff uses it to initialise PixelGrid (``gauss``/``zero`` init) and GSObject models,
+        Piff uses it to initialize PixelGrid (``gauss``/``zero`` init) and GSObject models,
         and in its own selection and stats. It is set only while the fit runs and restored
         afterwards; our moment diagnostics are configured separately and do not depend on it.
 
@@ -237,7 +239,7 @@ class FitConfig:
         ----------
         method : {'hsm', 'gauss', 'am', 'wmom'}
             Default ``'hsm'`` (Piff's default). HSM can fail on undersampled stamps; Piff
-            does not check its failure flag when initialising.
+            does not check its failure flag when initializing.
         weight_fwhm : float, optional
             Weight FWHM in arcsec, required for ``'wmom'``.
         """
@@ -284,6 +286,13 @@ class FitConfig:
                                                         "components": convolved}
         if c["pixelgrid"] is not None:
             psf = {"type": "Sum", "components": [psf, self._pixelgrid()]}
+        if psf["type"] != "RomanOptics" and needs_star_seds(convolved[0]):
+            # Piff's Convolve and Sum draw their profile without the star's SED, which a
+            # chromatic RomanOptics profile needs: every star would fail and be flagged.
+            raise ValueError("a chromatic RomanOptics can only be fitted on its own (Piff "
+                             "draws Convolve and Sum models without the stars' SEDs); use "
+                             "set_optics(..., chromatic=False), or set_mtf(False) with no "
+                             "kernel or PixelGrid")
         psf.update(c["iterations"])
         if c["outliers"] is not None:
             psf["outliers"] = self._outliers()

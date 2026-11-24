@@ -66,7 +66,7 @@ def test_star_table_on_exact_model(synthetic_stars):
     np.testing.assert_allclose(table["flux_r"], 1.0, atol=2e-3)
     np.testing.assert_allclose(table["model_flux"], 1.0, atol=1e-6)
     np.testing.assert_allclose(table["dx"], 0.0, atol=5e-3)
-    # dx is the arcsec centre through the WCS.
+    # dx is the arcsec center through the WCS.
     np.testing.assert_allclose(table["dx"], table["du"] / 0.11)
     assert 0.8 < np.mean(table["chisq_dof"]) < 1.2
     summary = diagnostics.summary(table)

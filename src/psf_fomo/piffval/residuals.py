@@ -1,21 +1,21 @@
 """Moment residuals of a fitted PSF: model vs data, model vs truth, and model alone.
 
 Four comparisons, each measured with any of the `psf_fomo.moments` algorithms (Piff's hsm,
-am, gauss, wmom; conventions in `psf_fomo.moments.measure`: T = Mxx + Myy in native pix²,
+am, gauss, wmom; conventions in `psf_fomo.moments.measure`: T = Mxx + Myy in arcsec²,
 distortion e, world axes):
 
 - ``'data'`` (native): the noisy data stamp vs the model drawn on the same stamp at the fitted
-  flux and centre (what Piff's residuals are made of). Both are measured about the catalog
+  flux and center (what Piff's residuals are made of). Both are measured about the catalog
   position, which wmom needs (it has no centroid fit).
 - ``'truth_native'``: the noiseless truth stamp (`Simulation.render_stamp`) vs the model drawn
-  at the true position (centre offset 0) with the true flux. Same weight. Isolates model error
+  at the true position (center offset 0) with the true flux. Same weight. Isolates model error
   from noise. The truth stamp has no detector effects (IPC, ...), the data may.
 - ``'truth_os'``: the truth PSF on a grid ``oversample`` × finer (`Simulation.truth_psf`) vs the
   model on the same grid. With ``include_pixel=True`` (default) both are the pixel-convolved
   effective PSF: a model drawn with method ``'auto'`` is convolved with the native pixel first,
   a ``'no_pixel'`` model (e.g. a Sum with a PixelGrid) already contains it. HSM works here.
 - ``'model_os'``: the model alone on an oversampled grid (same convention as ``'truth_os'``),
-  centred, unit flux, at each star. Needs no truth, so it works on real data; the ``*_ref``
+  centered, unit flux, at each star. Needs no truth, so it works on real data; the ``*_ref``
   columns and the residuals are NaN. Not in the default set.
 
 ``'truth_native'`` and ``'truth_os'`` need the simulation; ``'data'`` and ``'model_os'`` do
@@ -37,7 +37,7 @@ from astropy.table import Table, vstack
 
 from ..moments.compare import summarize
 from ..moments.measure import (ALGORITHMS, DEFAULT_WMOM_FWHM, algorithm_label, make_star,
-                               measure_star)
+                               mark_sizes, measure_star)
 
 COMPARISONS = ("data", "truth_native", "truth_os")  # the default set for simulations
 TRUTH_COMPARISONS = ("truth_native", "truth_os")
@@ -51,7 +51,7 @@ NOT_DRAWN = {**{key: np.nan for key in MOMENT_KEYS}, "flag": 8}   # measurement 
 
 
 def drawable(star):
-    """False for a star Piff left with a non-finite flux or centre (it cannot be drawn)."""
+    """False for a star Piff left with a non-finite flux or center (it cannot be drawn)."""
     return bool(np.isfinite(star.fit.flux) and np.all(np.isfinite(star.fit.center)))
 
 
@@ -94,7 +94,7 @@ def moment_residuals(psf, stars, table, sim=None, native=("wmom", "gauss"),
     -------
     astropy.table.Table
         Columns: the identifier columns, ``reserve``, ``comparison``, ``algorithm``,
-        ``<key>_ref`` and ``<key>_model`` for key in T [pix²], e1, e2, g1, g2, sigma [pix],
+        ``<key>_ref`` and ``<key>_model`` for key in T [arcsec²], e1, e2, g1, g2, sigma [arcsec],
         du, dv [arcsec], flux; ``dT_T``, ``de1``, ``de2``, ``flag_ref``, ``flag_model``,
         ``flag``. For ``'model_os'`` the ``*_ref`` columns and residuals are NaN.
     """
@@ -116,7 +116,7 @@ def moment_residuals(psf, stars, table, sim=None, native=("wmom", "gauss"),
         base = {k: row[k] for k in base_columns}
         piff_flag = FLAG_PIFF if row["flag"] else 0
         if not drawable(star):
-            # Piff excluded the star with a non-finite flux or centre: nothing to draw.
+            # Piff excluded the star with a non-finite flux or center: nothing to draw.
             for comparison in comparisons:
                 algs = native_algs if comparison in ("data", "truth_native") else os_algs
                 for alg, fwhm in algs:
@@ -131,7 +131,7 @@ def moment_residuals(psf, stars, table, sim=None, native=("wmom", "gauss"),
                 m_mod = measure_star(model, alg, fwhm)
                 rows.append(_row(base, comparison, algorithm_label(alg, fwhm), m_ref, m_mod,
                                  piff_flag))
-    return Table(rows=rows)
+    return mark_sizes(Table(rows=rows))
 
 
 def _expand(algorithms, wmom_fwhm):
@@ -148,12 +148,12 @@ def _image_pairs(psf, star, row, sim, comparisons, oversample, include_pixel):
     if "data" in comparisons:
         model_image = psf.drawStar(star).image
         # Fresh stars for both sides: Piff measures about star.fit.center, which is the
-        # fitted centre on Piff's star but zero (the catalog position) on a new one.
+        # fitted center on Piff's star but zero (the catalog position) on a new one.
         yield "data", (make_star(star.image, star.image_pos, star.weight),
                        make_star(model_image, star.image_pos, star.weight))
     if "truth_native" in comparisons:
         # Render a little larger and cut to the star's own stamp: a file-based Piff run cuts
-        # its stamps itself, possibly centred differently from Simulation.stars.
+        # its stamps itself, possibly centered differently from Simulation.stars.
         size = max(star.image.array.shape) + 4
         truth_image = sim.render_stamp(int(row["star_id"]), int(row["obs"]), size=size)
         truth_image = truth_image[star.image.bounds]
@@ -175,7 +175,7 @@ def _image_pairs(psf, star, row, sim, comparisons, oversample, include_pixel):
 
 def model_os_image(psf, star, oversample=5, include_pixel=True, size=MODEL_OS_SIZE,
                    sed_eff=None):
-    """The fitted model of one star alone on a grid ``oversample`` × finer, centred.
+    """The fitted model of one star alone on a grid ``oversample`` × finer, centered.
 
     Same convention as `Simulation.truth_psf`: a ``size × oversample`` square image whose WCS
     is the star's local WCS scaled by 1/oversample; unit model flux.
@@ -234,8 +234,8 @@ def model_moments(psf, x, y, sca, algorithms=("hsm",), wmom_fwhm=(DEFAULT_WMOM_F
     Returns
     -------
     astropy.table.Table
-        One row per position × algorithm: ``x``, ``y``, ``algorithm``, T [pix²], e1, e2, g1,
-        g2, sigma [pix], du, dv [arcsec], flux, ``flag``.
+        One row per position × algorithm: ``x``, ``y``, ``algorithm``, T [arcsec²], e1, e2,
+        g1, g2, sigma [arcsec], du, dv [arcsec], flux, ``flag``.
     """
     for alg in algorithms:
         if alg not in ALGORITHMS:
@@ -257,16 +257,16 @@ def model_moments(psf, x, y, sca, algorithms=("hsm",), wmom_fwhm=(DEFAULT_WMOM_F
             m = measure_star(star, alg, fwhm)
             rows.append({"x": xi, "y": yi, "algorithm": algorithm_label(alg, fwhm),
                          **{key: m[key] for key in MOMENT_KEYS}, "flag": m["flag"]})
-    return Table(rows=rows)
+    return mark_sizes(Table(rows=rows))
 
 
 def sca_grid(n_grid=5, n_pix=4088):
-    """Centres of an ``n_grid`` × ``n_grid`` grid of cells covering an SCA.
+    """Centers of an ``n_grid`` × ``n_grid`` grid of cells covering an SCA.
 
-    Returns flattened (x, y) arrays in GalSim image coordinates (pixel centres 1 … n_pix).
+    Returns flattened (x, y) arrays in GalSim image coordinates (pixel centers 1 … n_pix).
     """
-    centres = (np.arange(n_grid) + 0.5) * n_pix / n_grid + 0.5
-    x, y = np.meshgrid(centres, centres)
+    centers = (np.arange(n_grid) + 0.5) * n_pix / n_grid + 0.5
+    x, y = np.meshgrid(centers, centers)
     return x.ravel(), y.ravel()
 
 
@@ -320,14 +320,14 @@ def compare_fits(results, x=None, y=None, algorithms=("hsm",), wmom_fwhm=(DEFAUL
 
 
 def draw_model_oversampled(psf, star, template, include_pixel=True, sed_eff=None):
-    """The fitted model of one star on the grid of ``template``, centred, unit model flux.
+    """The fitted model of one star on the grid of ``template``, centered, unit model flux.
 
     Parameters
     ----------
     psf : piff.PSF
         Fitted PSF.
     star : piff.Star
-        Star with interpolated fit parameters (its flux and centre are not used).
+        Star with interpolated fit parameters (its flux and center are not used).
     template : galsim.Image
         Image whose bounds and WCS (e.g. from `Simulation.truth_psf`) are used.
     include_pixel : bool
@@ -355,7 +355,7 @@ def draw_model_oversampled(psf, star, template, include_pixel=True, sed_eff=None
 
 
 def draw_profile(prof, image, psf, sed_eff=None):
-    """Draw a model profile without adding a pixel, centred on ``image``.
+    """Draw a model profile without adding a pixel, centered on ``image``.
 
     A chromatic profile (Piff's chromatic RomanOptics) is drawn as Piff does: times the
     effective SED (SED × bandpass, unit flux), through a flat bandpass over the filter's range.

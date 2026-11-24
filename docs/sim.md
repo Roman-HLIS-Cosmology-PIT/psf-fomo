@@ -11,7 +11,7 @@ sim = RomanSimulation(scas=[1], n_obs=1, n_stars=9, filter="H158", seed=0)
 sim.set_placement("grid")                      # default "random"
 sim.set_brightness(mag_range=(17, 20))         # default mag=18
 sim.add_dilation(1.01, sigma_obs=0.002)
-sim.set_noise("roman")                         # default Gaussian, sigma = 1 e⁻
+sim.set_noise("roman-L2")                      # default Gaussian, sigma = 1 e⁻
 result = sim.run(save_to="out/run01", save_noiseless=True)
 
 stars, rows = result.stars(sca=1)              # Piff Stars + truth rows
@@ -37,7 +37,7 @@ sim.to_yaml("run01.yaml"); RomanSimulation.from_yaml("run01.yaml").run()
 | `add_aberration_scatter(sigma)` | per-star Zernike scatter, waves | 0 |
 | `add_jitter('random_walk', rms_mas, n_steps)` / `add_jitter('timeseries', t, dx_mas, dy_mas)` | pointing jitter | off |
 | `set_chromatic('flat' \| sed_file \| galsim.SED \| None, wave_type, flux_type)` | one SED for all stars; `None` = monochromatic | chromatic, flat SED |
-| `set_noise('gaussian', sigma)` / `set_noise('roman', effects)` | noise model | Gaussian, 1 e⁻ |
+| `set_noise('gaussian', sigma)` / `set_noise('roman-L1' \| 'roman-L2', effects)` | noise model | Gaussian, 1 e⁻ |
 | `set_wcs('simple' \| 'roman', ra, dec, pa, date)` | WCS | 0.11″ pixel scale |
 | `set_psf_model(spatial_interpolation, nominal_interp, n_waves)` | how the optical PSF is evaluated across the SCA and summed over the filter (below) | `'fast'`, `'bilinear'`, 10 |
 
@@ -100,10 +100,10 @@ PSD matrix, and the catalog records the M actually used. The kernel has its own 
 so adding it does not change any other draw.
 
 ### Jitter
-- `'random_walk'`: a new random walk per observation (`n_steps` samples), re-centred and
+- `'random_walk'`: a new random walk per observation (`n_steps` samples), re-centered and
   scaled to exactly `rms_mas` per axis.
 - `'timeseries'`: your (t [s], Δu [mas], Δv [mas]) samples, weighted by the time spacing and
-  re-centred on their mean; identical in every observation.
+  re-centered on their mean; identical in every observation.
 - The default `rms_mas` is GalSim's `galsim.roman.jitter_rms` (14 mas, documented by GalSim as
   a worst-case design value). It is a **placeholder for testing**, not a measured Roman value.
 
@@ -112,8 +112,19 @@ Images are in **ADU** (e⁻ divided by `galsim.roman.gain`), background subtract
 - Gaussian: σ in e⁻ per pixel.
 - Roman: any subset of `sky`, `poisson`, `reciprocity`, `dark`, `nonlinearity`, `ipc`,
   `read`, `quantize`, applied in that order (GalSim demo13 order). Sky = zodiacal level at the
-  pointing (or SCA centre) × (1 + stray light) + thermal background. Persistence is not
-  available. After the effects, the expected sky and dark levels are subtracted.
+  pointing (or SCA center) × (1 + stray light) + thermal background. Persistence is not
+  available. After the effects, the expected sky and dark levels are subtracted. The kind sets
+  the default effects (`effects=` overrides it):
+
+  | kind | default effects | meaning |
+  |---|---|---|
+  | `'roman-L1'` | all eight | every effect, none corrected (one rate-like image, not up-the-ramp reads) |
+  | `'roman-L2'` | `sky`, `poisson`, `reciprocity`, `dark`, `read` | what is left after L1 → L2 processing (as in romanimpreprocess): nonlinearity and IPC are corrected, the L2 rate is not quantized |
+
+  `'roman-L2'` keeps white read noise with GalSim's single value; the weak correlation
+  between neighboring pixels that IPC deconvolution gives the read noise, leftover 1/f noise,
+  brighter-fatter, cosmic rays and saturation masks are not simulated. Configurations saved
+  with the earlier kind `'roman'` load as `'roman-L1'` with their own effect list.
 
 Fluxes: AB magnitude → e⁻ with the GalSim Roman AB zeropoint, collecting area and
 `galsim.roman.exptime`.
@@ -123,7 +134,7 @@ Fluxes: AB magnitude → e⁻ with the GalSim Roman AB zeropoint, collecting are
 `Simulation` holds `config`, `provenance`, `images[(obs, sca)]`, `catalogs[obs]`
 (astropy Tables) and optionally `noiseless[(obs, sca)]`.
 
-Catalog columns: `star_id`, `obs`, `sca`, `x`, `y` (pix, GalSim convention: pixel centres at
+Catalog columns: `star_id`, `obs`, `sca`, `x`, `y` (pix, GalSim convention: pixel centers at
 integers, SCA spans 1…4088), `phase_x`, `phase_y` (pix), `u`, `v` (arcsec; simple WCS) or
 `ra`, `dec` (deg; Roman WCS), `mag`, `flux` (e⁻), `dilation`, `g1`, `g2`, `mtf_scale`
 (if MTF on), `kernel_mxx`, `kernel_mxy`, `kernel_myy` (pix², if a kernel is set), `z4`… (waves, value at the star), `sed_id` (chromatic), `bkg_var` (ADU²).
@@ -148,7 +159,7 @@ Access:
 
 ## Reproducibility
 Each random stream is seeded from (seed, obs, sca, purpose), so any star, error value or noise
-realisation is regenerated exactly from the configuration. Changing one setting does not
+realization is regenerated exactly from the configuration. Changing one setting does not
 change the draws of the others.
 
 ## Limitations
@@ -159,5 +170,5 @@ change the draws of the others.
 - With a Zernike field, the catalog `z` values are the field evaluated at the star; with
   `'fast'` and `'piff'` the image uses Piff's interpolation of corner PSFs evaluated at the
   corner values (with `'exact'`, the values at the star).
-- Weights use the expected background variance at the star centre, constant over the stamp.
+- Weights use the expected background variance at the star center, constant over the stamp.
 - Only one SED shared by all stars.

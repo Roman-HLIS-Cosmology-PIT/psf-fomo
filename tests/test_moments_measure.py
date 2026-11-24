@@ -4,15 +4,18 @@ import galsim
 import galsim.roman
 import pytest
 
+from astropy.table import Table
+
 from psf_fomo.moments.measure import (T_e_to_sigma, algorithm_label, e_to_g, g_to_e,
-                                      make_star, measure_star, moments_matrix, sigma_g_to_T)
+                                      make_star, mark_sizes, measure_star, moments_matrix,
+                                      sigma_g_to_T, upgrade_sizes)
 
 PIX = galsim.roman.pixel_scale
 NGMIX_ALGORITHMS = ["am", "gauss", "wmom"]
 
 
 def gaussian_star(sigma_pix, g1, g2, wcs=None, n=64, method="no_pixel", flux=1000.0, noise=0.0):
-    """Star of an elliptical Gaussian (world sigma in native pixels), centred on the stamp.
+    """Star of an elliptical Gaussian (world sigma in native pixels), centered on the stamp.
 
     ``noise`` > 0 adds fixed-seed Gaussian noise of that rms with the matching weight.
     """
@@ -45,9 +48,10 @@ def test_algorithm_label():
 def test_hsm_recovers_gaussian():
     res = measure_star(gaussian_star(3.0, 0.1, -0.05), "hsm")
     assert res["flag"] == 0
-    np.testing.assert_allclose(res["sigma"], 3.0, rtol=1e-3)
+    # Sizes in arcsec (sigma) and arcsec² (T).
+    np.testing.assert_allclose(res["sigma"], 3.0 * PIX, rtol=1e-3)
     np.testing.assert_allclose((res["g1"], res["g2"]), (0.1, -0.05), atol=1e-3)
-    np.testing.assert_allclose(res["T"], sigma_g_to_T(3.0, 0.1, -0.05), rtol=2e-3)
+    np.testing.assert_allclose(res["T"], sigma_g_to_T(3.0 * PIX, 0.1, -0.05), rtol=2e-3)
     np.testing.assert_allclose(res["flux"], 1000.0, rtol=1e-3)
 
 
@@ -58,7 +62,7 @@ def test_ngmix_adaptive_recovers_gaussian(algorithm):
     # converges to the right parameters but returns flag 512, which Piff reports as failure.
     res = measure_star(gaussian_star(3.0, 0.1, -0.05, noise=0.01), algorithm)
     assert res["flag"] == 0
-    np.testing.assert_allclose(res["sigma"], 3.0, rtol=1e-3)
+    np.testing.assert_allclose(res["sigma"], 3.0 * PIX, rtol=1e-3)
     np.testing.assert_allclose((res["g1"], res["g2"]), (0.1, -0.05), atol=1e-3)
     # am doubles ngmix's Gaussian-weighted flux to match HSM's convention.
     np.testing.assert_allclose(res["flux"], 1000.0, rtol=1e-2)
@@ -76,7 +80,7 @@ def test_wmom_matches_analytic_weighted_moments():
     sw2 = (fwhm / (2 * np.sqrt(2 * np.log(2))))**2
     cw = np.linalg.inv(np.linalg.inv(cov) + np.eye(2) / sw2)
     T = np.trace(cw)
-    np.testing.assert_allclose(res["T"], T / PIX**2, rtol=1e-3)
+    np.testing.assert_allclose(res["T"], T, rtol=1e-3)
     np.testing.assert_allclose(res["e1"], (cw[0, 0] - cw[1, 1]) / T, atol=1e-4)
     np.testing.assert_allclose(res["e2"], 2 * cw[0, 1] / T, atol=1e-4)
 
@@ -121,3 +125,17 @@ def test_failed_measurement_is_flagged():
 def test_unknown_algorithm():
     with pytest.raises(ValueError):
         measure_star(gaussian_star(2.0, 0, 0), "unweighted")
+
+
+def test_upgrade_sizes_converts_pixel_tables_once():
+    old = Table({"T": [1.0], "T_os": [2.0], "sigma_model": [0.5], "dT_T": [0.1],
+                 "e1": [0.02]})
+    with pytest.warns(UserWarning, match="native pixels"):
+        new = upgrade_sizes(old.copy())
+    np.testing.assert_allclose([new["T"][0], new["T_os"][0]], [PIX**2, 2 * PIX**2])
+    np.testing.assert_allclose(new["sigma_model"][0], 0.5 * PIX)
+    assert new["dT_T"][0] == 0.1 and new["e1"][0] == 0.02    # ratios and shapes unchanged
+    again = upgrade_sizes(new.copy())                        # already arcsec: untouched
+    np.testing.assert_array_equal(again["T"], new["T"])
+    marked = mark_sizes(Table({"T": [1.0]}))
+    np.testing.assert_array_equal(upgrade_sizes(marked)["T"], [1.0])

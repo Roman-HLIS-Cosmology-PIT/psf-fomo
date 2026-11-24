@@ -2,23 +2,26 @@
 
 The algorithms are Piff's own (``piff.Star.hsm``, ``.am``, ``.gauss``, ``.wmom(fwhm)``; Piff
 commit 280064f). We call them directly on each star and never change Piff's global shape
-method (``piff.set_shape_method``), which would also change Piff's fitting initialisation and
+method (``piff.set_shape_method``), which would also change Piff's fitting initialization and
 star selection.
 
-Piff's am, gauss and wmom start from (wmom: are centred on) ``star.image_pos`` shifted by
+Piff's am, gauss and wmom start from (wmom: are centered on) ``star.image_pos`` shifted by
 ``star.fit.center``. On a star made with `make_star` that offset is zero, so everything here is
 measured about the star position; pass fresh stars, not stars returned by a Piff fit.
 
 All Piff methods return ``(flux, cenu, cenv, sigma, g1, g2, flag)`` in local world coordinates
 (arcsec), with ``sigma`` = det(M)^(1/4) and g the reduced shear. We convert to:
 
-- ``sigma`` [native pix] and the trace ``T = Mxx + Myy`` [native pix²],
+- ``sigma`` [arcsec] and the trace ``T = Mxx + Myy`` [arcsec²],
   ``T = 2 sigma² (1 + g²) / (1 - g²)`` (Piff's ``measureShapes`` convention);
 - distortion ``e = (Mxx - Myy, 2 Mxy) / T`` and reduced shear ``g``, world (u, v) axes;
 - centroid offset ``du, dv`` [arcsec] from the star position.
 
-Arcsec are converted to native pixels with ``galsim.roman.pixel_scale`` (0.11″) everywhere,
-also with the Roman WCS, so sizes are comparable between native and oversampled images.
+Sizes are on the sky, measured through the image's own (local) WCS, so they are comparable
+between native and oversampled images and between WCSs. Divide T by
+``galsim.roman.pixel_scale**2`` (0.11″²) for nominal native pix² (`SIZE_UNITS` records the
+units). Earlier versions reported T in pix² and sigma in pix; tables now carry
+``meta['SIZEUNIT'] = 'arcsec'`` and `upgrade_sizes` converts tables saved before.
 
 Algorithm conventions (Piff):
 
@@ -26,9 +29,10 @@ Algorithm conventions (Piff):
 - ``am``: ngmix adaptive moments; flux doubled to match HSM's.
 - ``gauss``: ngmix maximum-likelihood elliptical Gaussian fit.
 - ``wmom``: ngmix moments with a fixed circular Gaussian weight of FWHM ``weight_fwhm``
-  [arcsec] centred on the star position; raw weighted moments, not deweighted. Size and shape
+  [arcsec] centered on the star position; raw weighted moments, not deweighted. Size and shape
   therefore depend on the weight and are meaningful only in comparisons at the same FWHM.
 """
+import re
 import warnings
 
 import numpy as np
@@ -38,6 +42,9 @@ import piff
 
 ALGORITHMS = ("hsm", "am", "gauss", "wmom")
 DEFAULT_WMOM_FWHM = 0.4  # arcsec
+SIZE_UNITS = {"T": "arcsec2", "sigma": "arcsec"}
+SIZE_UNIT_KEY = "SIZEUNIT"   # table meta key (a FITS header keyword when saved)
+_SIZE_COLUMN = re.compile(r"(T|sigma)(_|$)")   # T, T_os, T_ref, sigma_model, ... (not dT_T)
 
 # Flag bits: 1, 2, 4 are Piff's (failure, negative flux, centroid > 1″ from the position).
 FLAG_EXCEPTION = 8
@@ -100,8 +107,8 @@ def measure_star(star, algorithm, weight_fwhm=DEFAULT_WMOM_FWHM):
     Returns
     -------
     dict
-        ``flux`` (image units; algorithm-specific normalisation), ``du``, ``dv`` (arcsec),
-        ``sigma`` (native pix), ``T`` (native pix²), ``e1``, ``e2``, ``g1``, ``g2``, ``flag``
+        ``flux`` (image units; algorithm-specific normalization), ``du``, ``dv`` (arcsec),
+        ``sigma`` (arcsec), ``T`` (arcsec²), ``e1``, ``e2``, ``g1``, ``g2``, ``flag``
         (0 = good; bits 1 failure, 2 negative flux, 4 centroid more than 1″ from the star
         position, 8 the algorithm raised an exception). Size and shape are NaN when the
         measurement failed (sigma ≤ 0).
@@ -124,10 +131,34 @@ def measure_star(star, algorithm, weight_fwhm=DEFAULT_WMOM_FWHM):
         out.update(sigma=np.nan, T=np.nan, e1=np.nan, e2=np.nan, g1=np.nan, g2=np.nan)
         out["flag"] |= 1
         return out
-    sigma = sigma / galsim.roman.pixel_scale
     e1, e2 = g_to_e(g1, g2)
     out.update(sigma=sigma, T=sigma_g_to_T(sigma, g1, g2), e1=e1, e2=e2, g1=g1, g2=g2)
     return out
+
+
+def mark_sizes(table):
+    """Record in ``table.meta`` that its size columns are in arcsec (T in arcsec²)."""
+    table.meta[SIZE_UNIT_KEY] = "arcsec"
+    return table
+
+
+def upgrade_sizes(table):
+    """Convert, in place, a moments table saved before sizes were reported in arcsec.
+
+    Tables without ``meta['SIZEUNIT'] = 'arcsec'`` have T (and ``T_*``) in native pix² and
+    sigma (``sigma_*``) in native pix; they are multiplied by 0.11″² and 0.11″
+    (``galsim.roman.pixel_scale``), the scale they were divided by. Returns the table.
+    """
+    if table.meta.get(SIZE_UNIT_KEY) == "arcsec":
+        return table
+    scale = galsim.roman.pixel_scale
+    names = [n for n in table.colnames if _SIZE_COLUMN.match(n)]
+    for name in names:
+        table[name] = table[name] * (scale**2 if name.startswith("T") else scale)
+    if names:
+        warnings.warn("table saved with sizes in native pixels; converted to arcsec "
+                      f"(T in arcsec²): {names}")
+    return mark_sizes(table)
 
 
 def require_ngmix():
@@ -147,7 +178,7 @@ def make_star(image, image_pos, weight=None, pointing=None):
     image : galsim.Image
         Stamp with a WCS.
     image_pos : galsim.PositionD
-        Star position in the image coordinates; ``wmom`` centres its weight here and the
+        Star position in the image coordinates; ``wmom`` centers its weight here and the
         centroids are reported relative to it.
     weight : galsim.Image or float, optional
         Inverse-variance weight image, or a constant. Default 1 everywhere.

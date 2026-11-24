@@ -7,8 +7,22 @@ are approximately zero-mean away from stars.
 
 Roman effects are applied in the order of GalSim's Roman demo (demo13):
 sky (+ thermal, + stray light) → Poisson → reciprocity failure → dark current → nonlinearity →
-IPC → read noise → gain → quantisation. Persistence is not available (it needs the history of
+IPC → read noise → gain → quantization. Persistence is not available (it needs the history of
 previous exposures).
+
+Two Roman noise kinds choose the default set of effects:
+
+- ``'roman-L1'``: every effect above, none corrected (`ROMAN_L1_EFFECTS`). Still a single
+  rate-like image, not the up-the-ramp reads of a real L1 file.
+- ``'roman-L2'``: what remains after L1 → L2 processing as in romanimpreprocess
+  (`ROMAN_L2_EFFECTS`): nonlinearity and IPC are corrected there, and the L2 rate is a float,
+  so nonlinearity, IPC and quantization are left out. Reciprocity failure (count-rate
+  nonlinearity) is not corrected and stays. Simplifications: the read noise is white with
+  GalSim's single value; the weak neighbor anti-correlation that IPC deconvolution gives the
+  read noise, leftover 1/f noise, brighter-fatter, persistence, cosmic rays, saturation masks
+  and calibration-file errors are not simulated.
+
+In both, only the scatter of the dark current is kept and the expected sky is subtracted.
 """
 import numpy as np
 import galsim
@@ -16,6 +30,16 @@ import galsim.roman
 
 ROMAN_EFFECTS = ("sky", "poisson", "reciprocity", "dark", "nonlinearity", "ipc", "read",
                  "quantize")
+ROMAN_L1_EFFECTS = ROMAN_EFFECTS
+ROMAN_L2_EFFECTS = ("sky", "poisson", "reciprocity", "dark", "read")
+ROMAN_KINDS = {"roman-L1": ROMAN_L1_EFFECTS, "roman-L2": ROMAN_L2_EFFECTS}
+
+
+def upgrade_noise_config(noise):
+    """Rename the old noise kind ``'roman'`` (saved with its effect list) to ``'roman-L1'``."""
+    if noise.get("kind") == "roman":
+        noise = dict(noise, kind="roman-L1")
+    return noise
 
 
 def background_image(image, filter_name, bandpass, world_pos):
@@ -110,7 +134,7 @@ def background_variance(noise, background_e=0.0):
     ----------
     noise : dict
         Noise configuration: ``{'kind': 'gaussian', 'sigma': σ}`` or
-        ``{'kind': 'roman', 'effects': [...]}``.
+        ``{'kind': 'roman-L1' or 'roman-L2', 'effects': [...]}``.
     background_e : float or numpy.ndarray
         Expected sky + thermal background in e⁻ at the star(s) (Roman noise only).
 
@@ -135,7 +159,7 @@ def background_variance(noise, background_e=0.0):
 
 def star_gain(noise):
     """Gain (e⁻/ADU) to attach to Piff stars, or None if star shot noise is not simulated."""
-    if noise["kind"] == "roman" and "poisson" in noise["effects"]:
+    if noise["kind"] in ROMAN_KINDS and "poisson" in noise["effects"]:
         return galsim.roman.gain
     return None
 

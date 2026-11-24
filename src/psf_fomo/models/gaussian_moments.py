@@ -1,4 +1,4 @@
-"""``GaussianMoments``: a signed convolution kernel parameterised by its second moments.
+"""``GaussianMoments``: a signed convolution kernel parameterized by its second moments.
 
 Parameters (Mxx, Mxy, Myy) in native pix² along the world (u, v) axes (× 0.11″² gives
 arcsec²). Convolution adds moments, M_total = M_psf + M, so to first order the image responds
@@ -16,8 +16,8 @@ For a kernel that can only broaden (a PSD Gaussian), use Piff's ``GaussianBlur``
 ``'blur'`` in `psf_fomo.piffval.FitConfig.add_kernel`); it replaced our earlier
 ``signed=False`` mode.
 
-The per-star fit varies only M; flux and centre stay fixed (Piff's reflux updates them). This
-differs from Piff's ``Gaussian`` model, whose per-star fit also moves flux and centre.
+The per-star fit varies only M; flux and center stay fixed (Piff's reflux updates them). This
+differs from Piff's ``Gaussian`` model, whose per-star fit also moves flux and center.
 
 The model registers with Piff under the type name ``GaussianMoments`` when this module is
 imported (``import psf_fomo.models``).
@@ -134,7 +134,7 @@ class GaussianMoments(piff.Model):
         self.max_nfev_history.append(0)
 
     def fit(self, star, logger=None, convert_func=None, draw_method=None):
-        """Least-squares fit of (Mxx, Mxy, Myy) for one star, flux and centre fixed.
+        """Least-squares fit of (Mxx, Mxy, Myy) for one star, flux and center fixed.
 
         ``convert_func`` folds in the other Convolve components (supplied by Piff).
         """

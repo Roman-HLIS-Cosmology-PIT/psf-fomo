@@ -41,7 +41,7 @@ def exact_fit(synthetic_stars, analytic_sim):
 
 def test_oversampled_model_is_effective_psf_sampled_finer(exact_fit):
     # "Oversampled image" convention: the pixel-convolved PSF sampled on a finer grid. At the
-    # native-pixel centres it must equal the native drawing (× fine/native pixel area), i.e.
+    # native-pixel centers it must equal the native drawing (× fine/native pixel area), i.e.
     # the pixel is applied exactly once.
     psf, stars, _, _, sim = exact_fit
     star = stars[0]
@@ -80,7 +80,7 @@ def test_moment_residuals_exact_model(exact_fit):
     assert np.all(np.abs(truth["de1"]) < 5e-3) and np.all(np.abs(truth["de2"]) < 5e-3)
     # wmom about the same position on both sides; truth_os T is HSM's trace in pix².
     os_rows = good[good["comparison"] == "truth_os"]
-    T_expected = 2 * (0.15 / PIX) ** 2 + 2 / 12  # Gaussian + pixel, round-ish
+    T_expected = 2 * 0.15**2 + 2 / 12 * PIX**2  # Gaussian + pixel, round-ish, arcsec²
     np.testing.assert_allclose(os_rows["T_ref"], T_expected, rtol=0.02)
     summary = moment_summary(m)
     assert set(summary["set"]) == {"fit", "reserve"}
@@ -89,7 +89,7 @@ def test_moment_residuals_exact_model(exact_fit):
 
 def test_data_comparison_measures_both_about_the_catalog_position(exact_fit):
     # Piff (≥ 280064f) measures am/gauss/wmom about star.image_pos + star.fit.center. The data
-    # and model sides of 'data' must use the same position: both are fresh stars (centre 0).
+    # and model sides of 'data' must use the same position: both are fresh stars (center 0).
     psf, stars, _, table, sim = exact_fit
     star = piff.Star(stars[0].data, stars[0].fit.withNew(center=(0.02, -0.01)))
     pairs = dict(_image_pairs(psf, star, table[0], sim, ("data",), 5, True))
@@ -206,7 +206,9 @@ def test_plots_run(exact_fit):
                 result.plot_moment_residuals("data", algorithms="wmom_0.4"),
                 result.plot_field("flux_r"),
                 result.plot_field("dT_T", comparison="truth_os", algorithm="hsm"),
-                result.plot_components("kernel", n_grid=2)):
+                result.plot_components("kernel", n_grid=2),
+                result.plot_components("kernel", n_grid=1, include_pixel=False),
+                result.plot_component_images(size=7, oversample=3)):
         assert fig is not None
     stars_fit, rows_fit = result.selected_stars("fit")
     assert len(stars_fit) == len(stars) - 1 and len(rows_fit) == len(stars_fit)

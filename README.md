@@ -1,13 +1,16 @@
 # psf-fomo
 
-A test bench for PSF modelling of the Nancy Grace Roman Space Telescope Wide Field
+A test bench for PSF modeling of the Nancy Grace Roman Space Telescope Wide Field
 Instrument (WFI): simulate Roman star images with known PSF errors, measure PSF moments, fit
 the stars with [Piff](https://github.com/rmjarvis/Piff), and check how well the fitted PSF
 recovers the truth. It can also fit Piff PSF models to real Roman L2 images.
 
 ## Installation
 
-psf-fomo needs Python ≥ 3.10, GalSim ≥ 2.8 and a recent Piff. It is built against Piff's
+psf-fomo needs Python ≥ 3.10, a GalSim with its Roman science-frame update (GalSim's `main`
+branch, tested at commit `09b7f5d3f`; not yet in a release: `galsim.roman` WCS and PSFs in
+Roman's science frame, like L2 files) and a recent Piff. Install GalSim from a clone of its
+`main` branch (`pip install .`) as for Piff below. It is built against Piff's
 `main` branch at commit `280064f7e6bb648c82bb41643d8a10fa89034566`, which is newer than the
 latest Piff release (it needs, e.g., Piff's `GaussianBlur` model and its moment methods for
 undersampled stars), so Piff is installed from a clone rather than as a dependency.
@@ -70,7 +73,7 @@ python -m pytest -m slow    # slow tests: Roman PSF rendering and full Piff fits
 - Diagnostics: χ², flux and centroid recovery, convergence, moment residuals of model vs
   data and model vs truth (native and oversampled, several algorithms), fitted components vs
   truth, ρ statistics, and plots.
-- A reference solver: the joint χ² optimum of the same model, to separate optimiser
+- A reference solver: the joint χ² optimum of the same model, to separate optimizer
   limitations from model limitations.
 
 **Real data** (`psf_fomo.datafit`)
@@ -80,7 +83,7 @@ python -m pytest -m slow    # slow tests: Roman PSF rendering and full Piff fits
 - Synthetic L2 files from simulations, to try the workflow without real data.
 
 Features marked **experimental** in the documentation (telescope-attitude orientation,
-frame comparison, the stellar-locus selection, `DataFit.initialize`) are still being tested.
+the stellar-locus selection, `DataFit.initialize`) are still being tested.
 
 ## Documentation
 

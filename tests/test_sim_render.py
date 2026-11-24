@@ -100,7 +100,7 @@ def test_jitter_makes_psf_larger():
 def test_roman_noise_and_wcs():
     sim = RomanSimulation(scas=[3], n_stars=4, seed=2)
     sim.set_wcs("roman")
-    sim.set_noise("roman")
+    sim.set_noise("roman-L1")
     result = sim.run()
     image = result.images[0, 3]
     rows = result.catalog()

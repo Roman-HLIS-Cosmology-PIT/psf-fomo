@@ -131,7 +131,7 @@ def sed_setting(sed="flat", bandpass=None, wave_type="nm", flux_type="fphotons")
 
 
 def sed_from_setting(setting):
-    """The ``galsim.SED`` described by `sed_setting` output (not normalised)."""
+    """The ``galsim.SED`` described by `sed_setting` output (not normalized)."""
     if setting["sed"] == "flat":
         return galsim.SED("1", wave_type="nm", flux_type="fphotons")
     if setting["sed"] == "table":
@@ -163,7 +163,8 @@ def sample_sed(sed, bandpass, step=SED_STEP_NM):
         raise ValueError("the SED must be spectral (a flux density), not dimensionless")
     wave = np.arange(bandpass.blue_limit, bandpass.red_limit, step)
     wave = np.append(wave, bandpass.red_limit)      # both limits included
-    return wave, np.asarray(sed(wave), dtype=float)
+    # A constant SED may evaluate to a single number: give it the shape of the wavelengths.
+    return wave, np.broadcast_to(sed(wave), wave.shape).astype(float)
 
 
 def write_sed(path, wave, flux):

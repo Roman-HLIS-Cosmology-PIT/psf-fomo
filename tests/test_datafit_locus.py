@@ -63,7 +63,7 @@ def test_no_saturation_no_turn():
 
 def test_tight_skewed_locus_has_no_turn():
     # A very tight locus (0.2 %) with a skewed scatter (mean ≠ median, as sub-pixel phase can
-    # make), no saturation: the fitted centre is offset from every bin median, but that offset
+    # make), no saturation: the fitted center is offset from every bin median, but that offset
     # is constant in magnitude, so it is no turn.
     rng = np.random.default_rng(7)
     n = 700
@@ -80,7 +80,7 @@ def test_tight_skewed_locus_has_no_turn():
 def test_tight_locus_with_outliers(order):
     # A very tight locus (0.3 %) and a few objects 25–50 % larger: a least-squares fit over
     # everything is dragged ≈ 3 % off the stars, i.e. outside a ±0.9 % band. The clipping is
-    # centred on the median residual, so the centre still lands on the stars.
+    # centered on the median residual, so the center still lands on the stars.
     rng = np.random.default_rng(9)
     n_star, n_out = 60, 6
     n = n_star + n_out
@@ -99,7 +99,7 @@ def test_tight_locus_with_outliers(order):
 def test_no_locus_raises():
     # Sizes with no common value (uniform over a factor 3) and a band far too narrow (k = 0.01):
     # clipping keeps (almost) no star. That must be a clear error, never a fit of an empty set
-    # (which gave a zero centre).
+    # (which gave a zero center).
     rng = np.random.default_rng(10)
     n = 40
     t = Table({"id": np.arange(1, n + 1), "x": rng.uniform(1, 4088, n),
@@ -136,16 +136,16 @@ def test_bright_limit_and_faint_limit_by_hand():
     assert np.all((r["reason"] == "faint") == ((r["mag"] > 22.0) & (r["reason"] != "flagged")))
 
 
-def test_field_dependent_centre_keeps_edges_fair():
-    # PSF size ±6 % across the SCA: a constant centre with a tight band cuts the edges, a
+def test_field_dependent_center_keeps_edges_fair():
+    # PSF size ±6 % across the SCA: a constant center with a tight band cuts the edges, a
     # plane does not.
     t, _, _ = locus_table(n=3000, sat_mag=None, slope=0.06, n_out=0, n_flag=0, seed=4)
     xn = 2 * (np.asarray(t["x"]) - 1) / 4087 - 1
-    edge, centre = np.abs(xn) > 0.8, np.abs(xn) < 0.2
+    edge, center = np.abs(xn) > 0.8, np.abs(xn) < 0.2
 
     def kept(order):
         sel = select_locus(t, order=order, k=1.0).table["reason"] == "selected"
-        return sel[edge].mean(), sel[centre].mean()
+        return sel[edge].mean(), sel[center].mean()
 
     e0, c0 = kept(0)
     e1, c1 = kept(1)

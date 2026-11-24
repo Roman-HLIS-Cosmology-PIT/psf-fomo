@@ -1,7 +1,7 @@
-"""DataFit.initialize (Piff's initialisation, no fit) and the reference's refresh rounds.
+"""DataFit.initialize (Piff's initialization, no fit) and the reference's refresh rounds.
 
 The test field has model Poisson weights (a gain per star), so weights depend on the model:
-the refresh rounds must bring the reference started from Piff's initialisation to the same
+the refresh rounds must bring the reference started from Piff's initialization to the same
 optimum as the reference of a converged Piff fit.
 """
 from pathlib import Path
@@ -54,7 +54,7 @@ def test_initialize_is_not_a_fit(initialized, fitted):
     assert len(stars) == len(initialized.table)
 
 
-def test_reference_from_initialisation_reaches_the_fit_optimum(initialized, fitted):
+def test_reference_from_initialization_reaches_the_fit_optimum(initialized, fitted):
     from_fit = fitted.reference(starts=("given",), max_nfev=30, report="fit", given=False)
     from_init = initialized.reference(starts=("given",), max_nfev=30, report="fit",
                                       given=False)        # refresh 2 by default

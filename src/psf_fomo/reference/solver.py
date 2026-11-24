@@ -1,36 +1,36 @@
 """Reference solver: the joint χ² optimum of the model Piff fits.
 
-Piff fits a composite PSF block by block (each component in turn, then flux and centre,
-iterated). The reference solver takes the *same* Piff PSF object and minimises χ² over all
+Piff fits a composite PSF block by block (each component in turn, then flux and center,
+iterated). The reference solver takes the *same* Piff PSF object and minimizes χ² over all
 model parameters at once with ``scipy.optimize.least_squares``; every model image is drawn by
-Piff's own ``psf.drawStar``. Comparing Piff's solution with this optimum separates optimiser
+Piff's own ``psf.drawStar``. Comparing Piff's solution with this optimum separates optimizer
 limitations (Piff above the optimum of its own model) from model limitations (the optimum
 itself is biased or has excess χ²).
 
-Parameterisation (one block per leaf component):
+Parameterization (one block per leaf component):
 
 - ``RomanOptics``: one vector per SCA (one SCA per fit here); its Gaussian prior toward 0 is
   included as extra residuals p / σ.
 - ``Simple`` with ``Polynomial`` / ``BasisPolynomial``: per-star parameters are polynomials in
   the interpolator's own keys (normally u, v) with Piff's own set of terms, evaluated on
-  centred and scaled coordinates (same span, better conditioned). ``Mean``: a constant.
+  centered and scaled coordinates (same span, better conditioned). ``Mean``: a constant.
 - Frozen (held at the given values): ``Fixed`` components, ``RomanOptics`` pinned by a prior
   σ < 1e-6, and any component kind listed in ``freeze``.
 
 Simplifications:
 
-- Star centres are held fixed and fluxes are profiled in closed form at every evaluation
-  (variable projection). Centres: ``'catalog'`` (default; offset 0 = the truth for a
-  simulation) or ``'fitted'`` (Piff's fitted centres; for real data, which has no truth).
-  Piff also fits centres, so the reference χ² is an upper bound on the true optimum of Piff's
+- Star centers are held fixed and fluxes are profiled in closed form at every evaluation
+  (variable projection). Centers: ``'catalog'`` (default; offset 0 = the truth for a
+  simulation) or ``'fitted'`` (Piff's fitted centers; for real data, which has no truth).
+  Piff also fits centers, so the reference χ² is an upper bound on the true optimum of Piff's
   problem.
 - The star table, components and moments of a solution come from `star_table`,
   `components` and `moment_table`: simulation versions here; real-data fits use the subclass
   `psf_fomo.datafit.reference.DataReferenceSolver`.
-- A centred PixelGrid is optimised over the full grid (Piff restricts it to zero centroid and
-  fits the star centre instead); constraints inside a model's ``fit`` are not imposed.
+- A centered PixelGrid is optimized over the full grid (Piff restricts it to zero centroid and
+  fits the star center instead); constraints inside a model's ``fit`` are not imposed.
 - Only fit stars (not reserve, not flagged) enter χ², so only they are drawn during the
-  optimisation; reserve and flagged stars are drawn at the reported solutions
+  optimization; reserve and flagged stars are drawn at the reported solutions
   (``report='all'``, default) or not at all (``report='fit'``).
 
 Degrees of freedom: dof = weighted pixels of fit stars − one flux per fit star − free model
@@ -62,7 +62,7 @@ PINNED_PRIOR = 1e-6  # RomanOptics with a prior narrower than this is frozen (pi
 
 
 class Leaf:
-    """One parameterised component: per-star parameters P = K @ C, C of shape (n_terms, plen)."""
+    """One parameterized component: per-star parameters P = K @ C, C of shape (n_terms, plen)."""
 
     def __init__(self, leaf, stars, frozen):
         self.psf = leaf
@@ -103,7 +103,7 @@ class Leaf:
 
 
 def basis_matrix(leaf, stars):
-    """(n_stars, n_terms) basis of a leaf's interpolator, on centred and scaled coordinates.
+    """(n_stars, n_terms) basis of a leaf's interpolator, on centered and scaled coordinates.
 
     Uses Piff's own choice of terms, so the span equals Piff's interpolation space.
     """
@@ -126,9 +126,9 @@ def basis_matrix(leaf, stars):
         raise ValueError(f"reference solver: unsupported interpolator {name!r} "
                          f"for component {leaf.model._type_name!r}")
     vals = np.array([[float(s.data[k]) for k in keys] for s in stars])
-    centre = vals.mean(axis=0)
-    span = np.abs(vals - centre).max(axis=0)
-    vals = (vals - centre) / np.where(span > 0, span, 1.0)
+    center = vals.mean(axis=0)
+    span = np.abs(vals - center).max(axis=0)
+    vals = (vals - center) / np.where(span > 0, span, 1.0)
     return np.column_stack([np.prod(vals ** np.asarray(e), axis=1) for e in exps])
 
 
@@ -138,11 +138,11 @@ class ReferenceSolver:
     Parameters
     ----------
     psf : piff.PSF
-        The model, fitted or only initialised (e.g. `PiffValidation.initialize`). Its
+        The model, fitted or only initialized (e.g. `PiffValidation.initialize`). Its
         structure and drawing are used; its interpolators are not changed.
     stars : list of piff.Star
         Stars with data images and fit parameters (``psf.stars`` after a fit, or the
-        initialised stars). Their ``is_reserve`` / ``is_flagged`` marks are respected.
+        initialized stars). Their ``is_reserve`` / ``is_flagged`` marks are respected.
     rows : astropy.table.Table
         Simulation catalog rows of the stars (same order).
     sim : Simulation, optional
@@ -151,8 +151,8 @@ class ReferenceSolver:
         Component kinds to hold at their given values (``'optics'``, ``'kernel'``,
         ``'pixelgrid'``). Fixed components and pinned optics are always frozen.
     centers : {'catalog', 'fitted'}
-        Star centres held during the optimisation: the catalog position (default; the truth
-        in a simulation) or the stars' given (Piff-fitted) centres.
+        Star centers held during the optimization: the catalog position (default; the truth
+        in a simulation) or the stars' given (Piff-fitted) centers.
 
     Example
     -------
@@ -174,7 +174,7 @@ class ReferenceSolver:
         self.leaves = [Leaf(leaf, self.stars, kind_of(leaf) in freeze)
                        for leaf in leaf_psfs(psf)]
         self.free = [lf for lf in self.leaves if not lf.frozen]
-        # Unit flux, the held centre, the given parameter structure.
+        # Unit flux, the held center, the given parameter structure.
         self.base_fits = [s.fit.withNew(flux=1.0, center=(0.0, 0.0) if centers == "catalog"
                                         else tuple(s.fit.center)) for s in self.stars]
         self.D = np.array([s.image.array.ravel() for s in self.stars], dtype=float)
@@ -182,7 +182,7 @@ class ReferenceSolver:
         self.use = np.array([not s.is_reserve and not s.is_flagged for s in self.stars])
         if not self.use.any():
             raise ValueError("no fit stars (all reserve or flagged)")
-        # Reserve / flagged stars do not enter χ², so the optimisation draws only these.
+        # Reserve / flagged stars do not enter χ², so the optimization draws only these.
         self.fit_idx = np.flatnonzero(self.use)
         self.sw = np.sqrt(self.W[self.fit_idx])
         self.n, self.npix = self.D.shape
@@ -238,7 +238,7 @@ class ReferenceSolver:
             p = np.asarray(p, dtype=float)
             if lf.kind == "pixelgrid" and p.sum() == 0.0:
                 # GalSim's InterpolatedImage refuses a grid summing to exactly zero (e.g. an
-                # all-zero start); a 1e-12 nudge of the centre is negligible for a unit-flux
+                # all-zero start); a 1e-12 nudge of the center is negligible for a unit-flux
                 # model.
                 p = p.copy()
                 p[p.size // 2] += 1e-12
@@ -368,7 +368,7 @@ class ReferenceSolver:
         return np.vstack(rows)
 
     def evaluate(self, x, label="", moments=None, info=None, report="all"):
-        """Diagnostics of the solution x, drawn exactly (no linearisation).
+        """Diagnostics of the solution x, drawn exactly (no linearization).
 
         Parameters
         ----------
@@ -380,7 +380,7 @@ class ReferenceSolver:
             Keyword arguments of `psf_fomo.piffval.residuals.moment_residuals` (see
             `moment_table`). Default None = no moment residuals.
         info : dict, optional
-            Extra entries for the summary (e.g. optimiser status).
+            Extra entries for the summary (e.g. optimizer status).
         report : {'all', 'fit'}
             Stars drawn and reported: all (default; reserve stars give out-of-sample
             diagnostics) or only the fit stars (faster with many reserve stars). χ² is the
@@ -416,14 +416,14 @@ class ReferenceSolver:
                                self.components(final, rows), x=np.array(x, dtype=float))
 
     def reweighted_stars(self, x, reserve=True):
-        """All stars at the solution x after Piff's per-iteration update of weights and centres.
+        """All stars at the solution x after Piff's per-iteration update of weights and centers.
 
         For each star (reserve ones only if ``reserve``; flagged ones never): the model at x
         is drawn with the flux profiled on the current weights, its Poisson variance is added
         to the background weights (``Star.addPoisson``, a no-op without a ``gain`` property),
-        then Piff's reflux fits flux and centre with the new weights. The other stars only get
+        then Piff's reflux fits flux and center with the new weights. The other stars only get
         the parameters at x. A new solver on these stars continues from x (start
-        ``'given'``) with the updated weights and centres.
+        ``'given'``) with the updated weights and centers.
 
         Returns
         -------
@@ -470,7 +470,7 @@ class ReferenceSolver:
     def solve(self, starts=("given",), max_nfev=50, moments=None, report="all", given=True):
         """Joint optimum from one or more starting points.
 
-        Only the fit stars are drawn during the optimisation (only they enter χ²); the
+        Only the fit stars are drawn during the optimization (only they enter χ²); the
         reported solutions are re-drawn exactly for the stars chosen by ``report``.
 
         Parameters
@@ -493,7 +493,7 @@ class ReferenceSolver:
         -------
         dict
             ``'given'`` (if ``given``): `ReferenceResult` of the given parameters with the
-            held centres and profiled fluxes (for a fitted PSF: Piff's solution on the
+            held centers and profiled fluxes (for a fitted PSF: Piff's solution on the
             reference's terms); ``'optimum'``: {start: ReferenceResult}. Each optimum's
             summary has ``nfev``, ``njev``, ``status``, ``converged`` (False when scipy
             stopped at ``max_nfev``: status 0), ``seconds``.
@@ -537,12 +537,12 @@ class ReferenceResult:
     Attributes
     ----------
     stars : list of piff.Star
-        Stars with the solution's parameters, profiled flux, the held centre.
+        Stars with the solution's parameters, profiled flux, the held center.
     table : astropy.table.Table
-        As `FitResult.table` (``du = dv = 0`` with catalog centres; ``dof`` = pixels − 1
+        As `FitResult.table` (``du = dv = 0`` with catalog centers; ``dof`` = pixels − 1
         per star), or the real-data star table for `DataReferenceSolver`.
     summary : dict
-        χ², reference dof, ``chisq_dof``, ``n_free``, per-leaf info, optimiser status.
+        χ², reference dof, ``chisq_dof``, ``n_free``, per-leaf info, optimizer status.
     moments : astropy.table.Table or None
         As `FitResult.moments`.
     components : dict
@@ -594,8 +594,8 @@ def reference_from_config(validation, freeze=(), starts=("zero",), max_nfev=50, 
                           report="all", given=True):
     """Reference optimum of a `PiffValidation`'s model without running Piff's fit.
 
-    Piff only initialises the model (`PiffValidation.initialize`); the solver starts from that
-    initialisation (``'given'``) and/or from zero kernels and grids (``'zero'``, default).
+    Piff only initializes the model (`PiffValidation.initialize`); the solver starts from that
+    initialization (``'given'``) and/or from zero kernels and grids (``'zero'``, default).
     ``report``, ``given``: see `ReferenceSolver.solve`.
 
     Returns
@@ -619,7 +619,7 @@ def comparison_table(results, comparison="truth_os", algorithm="hsm"):
         own χ² and dof; ReferenceResults use the reference dof, so compare Piff with the
         reference via the ``'given'`` solution of `ReferenceSolver.solve`).
     comparison, algorithm : str
-        Which moment residuals to summarise (if present). For real data use
+        Which moment residuals to summarize (if present). For real data use
         ``comparison='data'`` (e.g. with ``algorithm='gauss'``).
 
     Returns

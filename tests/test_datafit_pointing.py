@@ -44,12 +44,6 @@ def test_pointing_from_header_and_argument(files):
     assert again.attitude == given.attitude
 
 
-def test_compare_frames_needs_the_whole_pointing(files):
-    (_, _), (bare, _) = files
-    with pytest.raises(ValueError, match="pointing values"):
-        open_l2(bare).compare_frames()
-
-
 def test_attitude_is_off_by_default(files):
     (image, catalog), _ = files
     cat = StarCatalog(catalog)

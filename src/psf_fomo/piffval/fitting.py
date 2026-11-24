@@ -11,10 +11,10 @@ Conventions (docs/conventions.md):
 
 - ``flux``: fitted flux in image units. ``model_flux``: total flux of the unit model (≠ 1 when
   a component, e.g. a PixelGrid in a Sum, carries net flux).
-- ``du, dv`` [arcsec]: fitted centre (``star.fit.center``) relative to the catalog position;
+- ``du, dv`` [arcsec]: fitted center (``star.fit.center``) relative to the catalog position;
   ``dx, dy`` [native pix]: the same through the local WCS.
 - ``chisq``, ``dof``: Piff's per-star values from the last reflux (dof = weighted pixels − 3
-  with a free centre).
+  with a free center).
 """
 import logging
 import sys
@@ -209,7 +209,7 @@ def apply_cuts(stars, cuts, logger=None):
     """Apply Piff's rejection cuts to one exposure's stars, in memory.
 
     All ``stars`` are the candidate objects (Piff's ``Flag`` selection without a flag) and also
-    the neighbours seen by ``min_sep``, so pass the stars of one exposure at a time. As in
+    the neighbors seen by ``min_sep``, so pass the stars of one exposure at a time. As in
     Piff, kept stars get the Poisson variance of their own image added when they have a
     ``gain`` property, and ``snr`` / ``raw_snr`` properties.
 

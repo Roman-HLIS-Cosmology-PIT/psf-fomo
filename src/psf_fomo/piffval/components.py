@@ -180,8 +180,9 @@ def pixelgrid_table(leaf, stars, rows):
     return out
 
 
-def component_image(psf, leaf, x, y, sca, oversample=5, size=25, sed_eff=None):
-    """Image of one component's unit profile at an SCA position, on a fine grid.
+def component_image(psf, leaf, x, y, sca, oversample=5, size=25, sed_eff=None,
+                    include_pixel=True):
+    """Image of one component's unit profile at an SCA position.
 
     A chromatic component (Piff's chromatic RomanOptics) is drawn with the effective SED
     ``sed_eff``, by default that of the fit's stars (`residuals.fit_sed`).
@@ -197,44 +198,53 @@ def component_image(psf, leaf, x, y, sca, oversample=5, size=25, sed_eff=None):
     sca : int
         SCA (chipnum) of the fit.
     oversample : int
-        Fine pixels per native pixel. Default 5.
+        Pixels of the image per native pixel. Default 5; 1 draws on the native pixels.
     size : int
         Size in native pixels. Default 25.
+    sed_eff : galsim.SED, optional
+        Effective SED for a chromatic component.
+    include_pixel : bool
+        Convolve the component with the native pixel response (True, default: what it
+        contributes to the effective PSF) or show it before the pixel (False). A PixelGrid
+        always contains the pixel response.
 
     Returns
     -------
     galsim.Image
-        Drawn without adding a pixel (a PixelGrid already contains it; optics / kernel /
-        MTF are shown pre-pixel), except Piff's GaussianBlur, which is integrated over each
-        fine pixel: near zero blur it is a near-delta that point sampling cannot represent.
-        For the drawing only, its moments get a floor of (0.1 fine pixel)² per axis, so a
-        zero blur is drawn as a Gaussian 0.1 fine pixel wide (the fitted values are not
-        changed).
+        Sampled at the centers of the image's pixels. Piff's GaussianBlur is drawn as the
+        Gaussian of its (PSD-projected) moments plus, for the drawing only, a floor of
+        (0.1 image pixel)² per axis: at zero blur it is a near-delta that needs a finite
+        width to be drawn (the fitted values are not changed). Without the pixel response it
+        is integrated over each image pixel, since point sampling a near-delta gives one
+        enormous value.
     """
     wcs = psf.wcs[sca]
     target = piff.Star.makeTarget(x=x, y=y, wcs=wcs, pointing=psf.pointing,
                                   properties={"sca": sca, "chipnum": sca})
     target = psf.interpolateStar(target)
-    method = "no_pixel"
-    if leaf.model._type_name == "GaussianBlur":
-        # GaussianBlur exists only in k-space; near zero blur its maxk is unbounded, so a
-        # pre-pixel drawing would need a huge FFT. Draw the same Gaussian in real space, and
-        # integrate it over each fine pixel: at zero blur it is a near-delta, which point
-        # sampling at pixel centres turns into one enormous value. Integrating an exact delta
-        # needs an FFT of the pixel itself (~80000² at 3× oversampling), so the drawn kernel
-        # gets a floor of 0.1 fine pixel in σ: invisible in a plot, image sum still 1.
+    local = wcs.local(galsim.PositionD(x, y))
+    fine = galsim.JacobianWCS(*(local.jacobian().getMatrix().ravel() / oversample))
+    is_blur = leaf.model._type_name == "GaussianBlur"
+    if is_blur:
+        # GaussianBlur exists only in k-space; near zero blur its maxk is unbounded, so it
+        # would need a huge FFT. Draw the same Gaussian, with a floor of 0.1 image pixel in
+        # σ: invisible in a plot, image sum still 1.
         m, _ = kernel_moments(leaf, target.fit.get_params(leaf._num))
         floor = (0.1 / oversample) ** 2           # native pix², added per axis
         prof = gaussian_kernel(m[0] + floor, m[1], m[2] + floor)
-        method = "auto"
     else:
         prof, _ = leaf._getRawProfile(target)
-    local = wcs.local(galsim.PositionD(x, y))
-    fine = galsim.JacobianWCS(*(local.jacobian().getMatrix().ravel() / oversample))
+    # A Gaussian times a pixel is computed in real space: an FFT of the pixel's sharp edges
+    # rings, which gives a narrow kernel small negative values.
+    if include_pixel and kind_of(leaf) != "pixelgrid":
+        prof = galsim.Convolve(prof, local.toWorld(galsim.Pixel(1.0)), real_space=is_blur)
+    elif is_blur:
+        # Without the native pixel, integrate the near-delta over each image pixel.
+        prof = galsim.Convolve(prof, fine.toWorld(galsim.Pixel(1.0)), real_space=True)
     image = galsim.ImageD(size * oversample, size * oversample, wcs=fine)
     if isinstance(prof, galsim.ChromaticObject):
         from .residuals import draw_profile, fit_sed
         draw_profile(prof, image, psf, sed_eff if sed_eff is not None else fit_sed(psf))
     else:
-        prof.drawImage(image=image, method=method)
+        prof.drawImage(image=image, method="no_pixel")
     return image

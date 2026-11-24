@@ -4,16 +4,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Detections stay recessive gray; the two selection stages take the first two categorical
-# hues (blue, orange; colour-blind separation checked). Marker shape and size differ too, so
-# the stages are not told apart by colour alone.
+# hues (blue, orange; color-blind separation checked). Marker shape and size differ too, so
+# the stages are not told apart by color alone.
 STAGES = (
     ("detection", dict(color="0.75", marker=".", s=6, lw=0)),
-    ("candidate", dict(facecolor="none", edgecolor="#eb6834", marker="o", s=28, lw=1.0)),
-    ("star", dict(color="#2a78d6", marker="D", s=10, lw=0)),
+    ("candidate", dict(facecolor="none", edgecolor="darkorange", marker="o", s=28, lw=1.0)),
+    ("star", dict(color="royalblue", marker="D", s=10, lw=0)),
 )
 LABELS = {"detection": "detections (stamp on image)", "candidate": "selected by the star finder",
           "star": "PSF stars (after cuts)"}
-SIZE_LABELS = {"T": "T = Mxx + Myy [pix²]", "sigma": "σ = det(M)^¼ [pix]"}
+SIZE_LABELS = {"T": "T = Mxx + Myy [arcsec²]", "sigma": "σ = det(M)^¼ [arcsec]"}
 
 
 def plot_size_mag(table, algorithm=None, size="T", mag="catalog", ax=None):
@@ -29,7 +29,7 @@ def plot_size_mag(table, algorithm=None, size="T", mag="catalog", ax=None):
         ``<size>_<algorithm>``, flagged measurements left out (counted in the title).
         Default None = the catalog's own size (``size_cat``, e.g. SEP ``r50``).
     size : {'T', 'sigma'}
-        Measured size to plot (with ``algorithm``). Default ``'T'`` (pix²).
+        Measured size to plot (with ``algorithm``). Default ``'T'`` (arcsec²).
     mag : {'catalog', 'measured'}
         ``'catalog'``: ``mag`` (or −2.5 log10 ``flux_cat`` without a zero point);
         ``'measured'``: ``mag_<algorithm>``. Default ``'catalog'``.
@@ -80,9 +80,9 @@ def plot_size_mag(table, algorithm=None, size="T", mag="catalog", ax=None):
 
 
 LOCUS_STYLES = {   # same hue order as above; marker shapes differ too
-    "selected": dict(color="#2a78d6", marker="o", s=10, lw=0),
-    "saturated": dict(color="#eb6834", marker="^", s=18, lw=0),
-    "off_locus": dict(color="#1baf7a", marker="s", s=14, lw=0),
+    "selected": dict(color="royalblue", marker="o", s=10, lw=0),
+    "saturated": dict(color="darkorange", marker="^", s=18, lw=0),
+    "off_locus": dict(color="mediumseagreen", marker="s", s=14, lw=0),
     "faint": dict(color="0.7", marker=".", s=6, lw=0),
     "flagged": dict(color="0.45", marker="x", s=12, lw=0.8),
 }
@@ -92,7 +92,7 @@ def plot_locus(result):
     """Diagnostics of `select_locus`: three panels.
 
     1. Size vs magnitude, stars by reason, the saturation limit.
-    2. Fractional size residual (to the locus centre at each star's position) vs magnitude,
+    2. Fractional size residual (to the locus center at each star's position) vs magnitude,
        the ±k × width band, and the binned medians of the saturation scan (deviating bins
        filled) with their uncertainties and the scan's reference level (dotted).
     3. Residual across the SCA for the stars kept in the locus (selected + off-locus): a
@@ -129,12 +129,12 @@ def plot_locus(result):
             ax.scatter(t["mag"][m], t["resid"][m], **LOCUS_STYLES[name])
     ax.axhspan(-band, band, color="0.9", zorder=0, label=f"±{s['k']:g} × width")
     used = np.asarray(bins["used"], dtype=bool)
-    centres = 0.5 * (np.asarray(bins["mag_lo"]) + np.asarray(bins["mag_hi"]))
+    centers = 0.5 * (np.asarray(bins["mag_lo"]) + np.asarray(bins["mag_hi"]))
     dev = np.asarray(bins["deviates"], dtype=bool)
     for sel, face, label in ((used & ~dev, "white", "bin median"),
                              (used & dev, "k", "bin median, deviates")):
         if sel.any():
-            ax.errorbar(centres[sel], np.asarray(bins["median"])[sel],
+            ax.errorbar(centers[sel], np.asarray(bins["median"])[sel],
                         yerr=np.asarray(bins["uncertainty"])[sel], fmt="o", mfc=face,
                         mec="k", ecolor="k", ms=5, capsize=2, label=label)
     ax.axhline(0, color="0.5", lw=0.8)
@@ -142,12 +142,12 @@ def plot_locus(result):
     lim = max(3 * band, np.nanpercentile(np.abs(t["resid"][reasons != "flagged"]), 99))
     ax.set_ylim(-lim, lim)
     ax.set_xlabel(s["mag"])
-    ax.set_ylabel("size / locus centre − 1")
+    ax.set_ylabel("size / locus center − 1")
     ax.set_title(f"locus width {s['width']:.4f}, order {s['order']}")
 
     for ax in axes[:2]:
         if limit is not None:
-            ax.axvline(limit, color="#eb6834", ls="--", lw=1,
+            ax.axvline(limit, color="darkorange", ls="--", lw=1,
                        label=f"saturation {limit:.2f} ({s['bright_limit_source']})")
         ax.legend(fontsize=8, frameon=False)
 
@@ -156,7 +156,7 @@ def plot_locus(result):
     vmax = max(band, 1e-6)
     sc = ax.scatter(t["x"][m], t["y"][m], c=t["resid"][m], cmap="RdBu_r", vmin=-vmax,
                     vmax=vmax, s=14)
-    fig.colorbar(sc, ax=ax, label="size / locus centre − 1")
+    fig.colorbar(sc, ax=ax, label="size / locus center − 1")
     ax.set_xlim(0, 4089)
     ax.set_ylim(0, 4089)
     ax.set_aspect("equal")

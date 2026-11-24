@@ -1,4 +1,4 @@
-"""Reference optimum of real-data fits (DataReferenceSolver): fitted centres, no truth."""
+"""Reference optimum of real-data fits (DataReferenceSolver): fitted centers, no truth."""
 import importlib.util
 
 import numpy as np
@@ -34,12 +34,12 @@ def reference(data_fit):
 
 def test_given_is_piff_with_profiled_fluxes(data_fit, reference):
     given = reference["given"]
-    # Same centres and parameters, fluxes re-profiled exactly: χ² at most Piff's (whose last
-    # flux came from a linearised step), and close to it.
+    # Same centers and parameters, fluxes re-profiled exactly: χ² at most Piff's (whose last
+    # flux came from a linearized step), and close to it.
     piff_chisq = data_fit.fit_summary["chisq"]
     assert 0.98 * piff_chisq <= given.summary["chisq"] <= 1.001 * piff_chisq
     assert given.summary["centers"] == "fitted"
-    # Held centres are Piff's fitted ones (same stars, same order).
+    # Held centers are Piff's fitted ones (same stars, same order).
     np.testing.assert_allclose(given.table["du"], data_fit.table["du"])
     np.testing.assert_allclose(given.table["dv"], data_fit.table["dv"])
     assert given.summary["n_fit_stars"] == int((~data_fit.table["reserve"]).sum())
@@ -69,7 +69,7 @@ def test_data_diagnostics_of_solutions(data_fit, reference):
     np.testing.assert_allclose(t["flux_cat_r"], t["flux_cat_r"][0], rtol=0.01)
 
 
-def test_catalog_centres_option(data_fit):
+def test_catalog_centers_option(data_fit):
     stars, _ = data_fit.fitted_stars()
     solver = DataReferenceSolver(data_fit.psf, stars, data_fit.selection, centers="catalog")
     out = solver.solve(starts=())

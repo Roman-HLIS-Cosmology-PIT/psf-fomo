@@ -41,7 +41,7 @@ same = load_moments("out/moments01")
 - `noiseless`: the same stamp re-rendered without noise (`Simulation.render_stamp`), same
   weight. It has no detector effects (IPC, nonlinearity, ...) even with Roman noise.
 - `oversampled`: the unit-flux truth PSF on a grid `oversample` times finer
-  (`Simulation.truth_psf`), by default the pixel-convolved effective PSF, weight 1, centred.
+  (`Simulation.truth_psf`), by default the pixel-convolved effective PSF, weight 1, centered.
 
 ## Algorithms (Piff's, called per star)
 | name | what | weight |
@@ -55,11 +55,13 @@ Piff's global shape method (`piff.set_shape_method`) is never changed.
 
 ## Conventions (all algorithms)
 Full definitions in [conventions.md](conventions.md#moments).
-- `sigma` [native pix] = det(M)^¼; `T` [native pix²] = Mxx + Myy (trace)
-  = 2 sigma² (1 + g²)/(1 − g²).
+- `sigma` [arcsec] = det(M)^¼; `T` [arcsec²] = Mxx + Myy (trace)
+  = 2 sigma² (1 + g²)/(1 − g²). Divide T by 0.11² for nominal native pix².
 - `e1, e2` = distortion (Mxx − Myy, 2 Mxy)/T; `g1, g2` = reduced shear; world (u, v) axes.
 - `du, dv` [arcsec]: centroid relative to the star position (wmom: weighted centroid).
-- arcsec → native pix with `galsim.roman.pixel_scale` (0.11″), also with the Roman WCS.
+- Sizes are measured on the sky through the image's local WCS. Tables record this in
+  `meta['SIZEUNIT'] = 'arcsec'`; results saved by earlier versions (T in pix², sigma in pix)
+  are converted when loaded, with a warning.
 - `flag`: 0 good; 1 failure, 2 negative flux, 4 centroid > 1″ off, 8 exception raised.
   Failed rows have NaN size/shape. Summaries use only `flag == 0` rows and report
   `n_flagged`.
