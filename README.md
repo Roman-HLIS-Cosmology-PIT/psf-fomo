@@ -1,8 +1,6 @@
 # psf-fomo
 
-A test bench for PSF modeling of the Nancy Grace Roman Space Telescope Wide Field
-Instrument (WFI): simulate Roman star images with known PSF errors, measure PSF moments, fit
-the stars with [Piff](https://github.com/rmjarvis/Piff), and check how well the fitted PSF
+PSF Fitting, mOdeling and MOments (psf-fomo), is a test bench and validation tool for PSF modeling of the Nancy Grace Roman Space Telescope Wide Field Instrument (WFI). With this tool, you are able to simulate Roman star images with known PSF errors, measure PSF moments, fit the stars with [Piff](https://github.com/rmjarvis/Piff), and check how well the fitted PSF
 recovers the truth. It can also fit Piff PSF models to real Roman L2 images. This tool is in active
 development and may be updated with high cadence
 
@@ -75,6 +73,13 @@ code here may also change.
   reference optimum.
 - Synthetic L2 files from simulations, to try the workflow without real data.
 
+**Helpers for real data** (`psf_fomo.utils`)
+- Conversion of calibrated Roman ASDF files (local, URL or open product) to the FITS layout
+  used above, with uniform-weight images and background-only weights.
+- SEP detection catalogs of converted files, optionally matched to Gaia, and their plots.
+- Optional dependencies (asdf, roman_datamodels, gwcs, sep, astroquery, …):
+  `pip install ".[utils]"`.
+
 Features marked **experimental** in the documentation (telescope-attitude orientation,
 the stellar-locus selection, `PiffDataFit.initialize`) are still being tested.
 
@@ -84,7 +89,8 @@ the stellar-locus selection, `PiffDataFit.initialize`) are still being tested.
   the simulated PSF, fitting conventions.
 - [`docs/sim.md`](docs/sim.md), [`docs/moments.md`](docs/moments.md),
   [`docs/piff_simfit.md`](docs/piff_simfit.md),
-  [`docs/piff_datafit.md`](docs/piff_datafit.md): usage of each module.
+  [`docs/piff_datafit.md`](docs/piff_datafit.md), [`docs/utils.md`](docs/utils.md): usage
+  of each module.
 - [`CHANGELOG.md`](CHANGELOG.md): changes between versions.
 
 ## License

@@ -1,4 +1,4 @@
-"""Roman L2 images converted from ASDF to FITS (the converter is not part of psf-fomo).
+"""Roman L2 images converted from ASDF to FITS (`psf_fomo.utils.convert_asdf`).
 
 Layout (HDUs found by EXTNAME; see ``docs/piff_datafit.md``):
 
@@ -8,7 +8,8 @@ Layout (HDUs found by EXTNAME; see ``docs/piff_datafit.md``):
 - ``SCI``: optimal-weight slope [DN/s] with the TAN-SIP WCS. ``SCI_UNIF`` = ``SCI`` + ``DUMO``
   (uniform-weight slope).
 - ``MASK`` (1 = bad), ``IVAR`` (1/variance, (DN/s)⁻²), ``GAIN`` (= ``SCI / VAR_POISSON``,
-  electrons per DN/s); with ``--uniform`` also ``MASK_UNIF``, ``IVAR_UNIF``, ``GAIN_UNIF``.
+  electrons per DN/s); with ``uniform_weights=True`` also ``MASK_UNIF``, ``IVAR_UNIF``,
+  ``GAIN_UNIF``.
 - ``VAR_RNOISE``, ``VAR_POISSON``, ``DQ``, ``ERR``, ... (not used by the fit).
 - ``SKYBKG`` in every header: one sky level per detector, DN/s per pixel (SEP, on ``SCI``).
 
@@ -21,7 +22,7 @@ Weights (`L2Image.set_weights`):
 - ``'model_poisson'`` (default): the weight plane holds read + background noise only, and Piff
   adds the star's Poisson variance from the model at each iteration (Piff's ``gain``, one value
   per star = `gain_at`). ``IVAR_UNIF`` is always of that form; ``IVAR`` only when the converter
-  ran with ``--background-weights``, which `check_weights` verifies.
+  ran with ``background_weights=True``, which `check_weights` verifies.
 - ``'ivar'``: the weight plane as it is, no Poisson term added by Piff.
 
 Coordinates: GalSim / FITS convention, pixel centers at 1 … 4088.
@@ -72,7 +73,8 @@ class L2Image:
         The FITS file.
     variant : {'unif', 'standard'}
         ``'unif'`` (default): ``SCI_UNIF``, ``MASK_UNIF``, ``IVAR_UNIF``, ``GAIN_UNIF`` (the
-        converter's ``--uniform``). ``'standard'``: ``SCI``, ``MASK``, ``IVAR``, ``GAIN``.
+        converter's ``uniform_weights=True``). ``'standard'``: ``SCI``, ``MASK``, ``IVAR``,
+        ``GAIN``.
     sca : int, optional
         SCA number 1–18. Default: from the PRIMARY header (``DETECTOR`` such as ``'WFI05'``,
         or ``SCA`` / ``SCA_NUM``).
@@ -123,8 +125,8 @@ class L2Image:
             missing = [n for n in VARIANTS[variant].values() if n not in names]
             if missing:
                 hint = (" (the uniform planes are written only with the converter's "
-                        "--uniform; use variant='standard' otherwise)" if variant == "unif"
-                        else "")
+                        "uniform_weights=True; use variant='standard' otherwise)"
+                        if variant == "unif" else "")
                 raise ValueError(f"{self.path.name}: HDUs {missing} not found; present: "
                                  f"{names}{hint}")
             self.hdus = {role: names.index(name) for role, name in VARIANTS[variant].items()}
@@ -284,7 +286,7 @@ class L2Image:
         """Check that the weight plane fits the chosen noise model; return the median ratio.
 
         Only ``'model_poisson'`` with the standard variant needs it: ``IVAR`` must then be the
-        converter's ``--background-weights`` form 1/(``VAR_RNOISE`` + ``SKYBKG``/``GAIN``).
+        converter's ``background_weights=True`` form 1/(``VAR_RNOISE`` + ``SKYBKG``/``GAIN``).
         A data-based ``IVAR`` (1/``ERR``², which contains the star's Poisson noise) would make
         Piff count that noise twice. Tested on the brightest unmasked pixels more than 10σ
         above the sky (at most 2000, at least 20), where the two forms differ most.
@@ -327,8 +329,8 @@ class L2Image:
             raise ValueError(
                 f"IVAR is not 1/(VAR_RNOISE + SKYBKG/GAIN) on the brightest pixels (median "
                 f"ratio {ratio:.3f}): it probably contains the stars' Poisson noise (converter "
-                "run without --background-weights). Re-run the converter with "
-                "--background-weights, or use set_weights('ivar').")
+                "run without background_weights=True). Re-run the converter with "
+                "background_weights=True, or use set_weights('ivar').")
         return ratio
 
     def check_orientation(self, pa_deg=None, pa_is_fpa=False, strict=True):

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "psf-fomo"
 version = "0.1.0"
-description = "PSF simulation, moments validation and Piff validation test bench for Roman WFI"
+description = "Roman WFI PSF test bench: simulations, PSF moments and Piff fits of simulations and real data"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Federico Berlfein" }]
@@ -19,12 +19,15 @@ dependencies = [
     "matplotlib",
     "pyyaml",
     "galsim>=2.8",
+    "ngmix",
+    "treecorr",
 ]
 
 [project.optional-dependencies]
-moments = ["ngmix"]
-stats = ["treecorr"]
 dev = ["pytest"]
+# psf_fomo.utils: ASDF → FITS conversion, SEP detection, Gaia matching, remote downloads.
+utils = ["asdf", "asdf-astropy", "roman_datamodels", "gwcs", "sep>=1.4", "astroquery",
+         "fsspec", "aiohttp", "s3fs"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

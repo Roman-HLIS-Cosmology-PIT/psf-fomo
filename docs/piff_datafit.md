@@ -45,20 +45,20 @@ same = load_data_fit("out/real01")
 
 ## Input files
 
-L2 images converted from ASDF to FITS (the converter is not part of psf-fomo), one exposure
-of one SCA per file:
+L2 images converted from ASDF to FITS with `psf_fomo.utils.convert_asdf` (see
+[`utils.md`](utils.md)), one exposure of one SCA per file:
 
 | HDU | content |
 |---|---|
-| `PRIMARY` | metadata: detector, filter, exposure time; pointing `RA_V1`, `DEC_V1`, `PA_V3` (+ `TARG_RA`, `TARG_DEC`, `PA_APER`), degrees, if the converter copies ASDF `meta.pointing` |
+| `PRIMARY` | metadata: detector, filter, exposure time; pointing `RA_V1`, `DEC_V1`, `PA_V3` (+ `TARG_RA`, `TARG_DEC`, `PA_APER`), degrees, from ASDF `meta.pointing` |
 | `SCI` | optimal-weight slope, DN/s, TAN-SIP WCS (+ `WCSERR`) |
 | `DQ`, `ERR` | copied from the ASDF |
 | `MASK` | 1 = bad |
-| `IVAR` | 1/`ERR`² by default; 1/(`VAR_RNOISE` + `SKYBKG`/`GAIN`) with `--background-weights` |
+| `IVAR` | 1/`ERR`² by default; 1/(`VAR_RNOISE` + `SKYBKG`/`GAIN`) with `background_weights=True` |
 | `VAR_POISSON`, `VAR_RNOISE`, `VAR_FLAT`, `CHISQ`, `DUMO` | if present in the ASDF |
 | `GAIN` | `SCI / VAR_POISSON` (electrons per DN/s) |
 | `SCI_UNIF` | `SCI` + `DUMO` (uniform-weight slope), whenever `DUMO` exists |
-| `MASK_UNIF`, `IVAR_UNIF`, `GAIN_UNIF` | with `--uniform`; `IVAR_UNIF` = 1/(read_unif + `SKYBKG`/`GAIN_UNIF`) |
+| `MASK_UNIF`, `IVAR_UNIF`, `GAIN_UNIF` | with `uniform_weights=True`; `IVAR_UNIF` = 1/(read_unif + `SKYBKG`/`GAIN_UNIF`) |
 
 `SKYBKG` (every header): one sky level per detector, DN/s per pixel, measured with SEP on
 `SCI`. The images are not background-subtracted.
@@ -103,7 +103,7 @@ img.pointing, img.attitude             # pointing from the header (degrees); att
 ```
 
 - **Variant**: `'unif'` (default) uses `SCI_UNIF`, `MASK_UNIF`, `IVAR_UNIF`, `GAIN_UNIF`
-  (missing without the converter's `--uniform` → error); `'standard'` uses `SCI`, `MASK`,
+  (missing without the converter's `uniform_weights=True` → error); `'standard'` uses `SCI`, `MASK`,
   `IVAR`, `GAIN`. The planes of the two are never mixed.
 - **Header**: SCA from `DETECTOR` (e.g. `'WFI05'`), else `SCA` / `SCA_NUM`; filter from
   `FILTER`, else `OPT_ELEM`; exposure time from `EXPTIME` / `EFFEXPTM` / `EXPOSURE_TIME`
@@ -112,7 +112,7 @@ img.pointing, img.attitude             # pointing from the header (degrees); att
 - **Weights**: `'model_poisson'` (default): the weight plane holds read + background noise,
   and Piff adds each star's Poisson variance from the model at every iteration (Piff's
   `gain`, one value per star from `gain_at`). `IVAR_UNIF` is always of that form. With the
-  standard variant, `check_weights` verifies that `IVAR` is the `--background-weights` form
+  standard variant, `check_weights` verifies that `IVAR` is the `background_weights=True` form
   on pixels > 10σ above the sky; a data-based `IVAR` (1/`ERR`²) would make Piff count the
   stars' Poisson noise twice. `'ivar'`: the plane as it is, no Poisson term added.
 - **Sky**: `SKYBKG` of the image HDU, passed to Piff as a number (Piff's header-key option
