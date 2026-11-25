@@ -23,8 +23,8 @@ cat = StarCatalog("exp_wfi05_det.fits")          # SEP catalog, 0-based x, y
 cat.select_stars("sizemag")                      # Piff SizeMag (gauss); or "all", "column"
 cat.set_cuts(clean_only=True, min_snr=50, min_sep=2.0, max_mask_pixels=0)
 
-cfg = PiffFitConfig(); cfg.set_optics("free"); cfg.add_kernel("signed"); cfg.add_pixelgrid(5)
-fit = PiffDataFit(img, cat, cfg, name="signed+PG")
+cfg = PiffFitConfig(); cfg.set_optics("free"); cfg.add_kernel("blur"); cfg.add_pixelgrid(5)
+fit = PiffDataFit(img, cat, cfg, name="blur+PG")
 fit.set_reserve(0.2, seed=3)
 fit.set_diagnostics(native=("wmom", "gauss"), oversampled=("hsm",))
 res = fit.run(save_to="out/real01")             # or fit.run(): nothing kept on disk
@@ -39,7 +39,7 @@ res.components()         # fitted Zernikes, kernel M, PixelGrid (no truth column
 res.plot_size_mag(); res.plot_mean_images(); res.plot_chi2_radius()
 res.plot_field("sky_resid"); res.plot_field("T_model", "model_os", "hsm")
 res.plot_moment_residuals(); res.plot_components("kernel"); res.plot_zernikes(); res.rho()
-compare_fits({"Piff PG": res_pg, "signed+PG": res})  # model − model at the same stars
+compare_fits({"PG": res_pg, "blur+PG": res})       # model − model at the same stars
 same = load_data_fit("out/real01")
 ```
 

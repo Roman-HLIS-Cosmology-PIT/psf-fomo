@@ -81,7 +81,8 @@ the code here may also change accordingly.
   `pip install ".[utils]"`.
 
 Features marked **experimental** in the documentation (telescope-attitude orientation,
-the stellar-locus selection, `PiffDataFit.initialize`) are still being tested.
+the stellar-locus selection, `PiffDataFit.initialize`, the signed kernel `GaussianMoments`)
+are still being tested.
 
 ## Documentation
 

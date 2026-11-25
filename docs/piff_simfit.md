@@ -16,7 +16,7 @@ s = RomanSimulation(n_stars=30, seed=1); s.add_kernel(0.03, 0.0, 0.02); sim = s.
 
 cfg = PiffFitConfig()
 cfg.set_optics("pinned")                 # or "free", max_zernike=11, prior_sigma=0.05
-cfg.add_kernel("signed", order=0)        # GaussianMoments; or Piff "blur", "gaussian"
+cfg.add_kernel("blur", order=0)          # Piff GaussianBlur; or Piff "gaussian"
 # cfg.add_pixelgrid(size=5, scale=0.11, order=1)
 # cfg.set_outliers(chisq_nsigma=4, max_centroid=0.5)
 # cfg.set_piff_shape_method("gauss")     # Piff's internal method; default "hsm"
@@ -47,7 +47,7 @@ Generated Piff structure (pieces left out when not requested):
 |---|---|---|
 | `set_optics(mode, max_zernike, prior_sigma, aberration_interp, nominal_interp, chromatic)` | `'free'`: Z4…Z_max fitted per SCA, Gaussian prior toward 0 of width `prior_sigma` waves (scalar, one per Zernike, or None = no prior). `'pinned'`: held at 0 (nominal optics) by σ = 1e-10 on Z4 only. `chromatic`: False, True, or None = Piff's default (True); True only for RomanOptics alone | free, Z4–Z22, 0.05, constant, bilinear, monochromatic |
 | `set_mtf(on)` | fixed `GaussianMixture` with the simulation's MTF constants ([conventions](conventions.md#simulated-psf-truth); sigmas in arcsec), `interp: Fixed`; cannot be fitted | on |
-| `add_kernel(kind, order, init, max_nfev, interp)` | `'signed'`: our `GaussianMoments` (M in pix², either sign, flux and center fixed in its fit); `'blur'`: Piff `GaussianBlur` (broadens only, see below); `'gaussian'`: Piff `Gaussian` (its fit also moves flux and center); interpolator of `order`, `interp='Polynomial'` or (blur only) `'BasisPolynomial'` | none |
+| `add_kernel(kind, order, init, max_nfev, interp)` | `'blur'`: Piff `GaussianBlur` (broadens only, see below); `'gaussian'`: Piff `Gaussian` (its fit also moves flux and center); `'signed'` (experimental): our `GaussianMoments` (M in pix², either sign, flux and center fixed in its fit); interpolator of `order`, `interp='Polynomial'` or (blur only) `'BasisPolynomial'` | none |
 | `add_pixelgrid(size, scale, order, interp, centered, init)` | `PixelGrid` in a Sum, `BasisPolynomial` | none |
 | `set_outliers(chisq_nsigma, max_remove, max_centroid)` | Piff `Chisq` / `Centroid` (arcsec) | none |
 | `set_iterations(max_iter, min_iter, chisq_thresh)` | Piff fit loop | 30, 2, 0.1 |
@@ -66,8 +66,9 @@ and can only be fitted with `chromatic=False`. Oversampled model images (`'truth
 fit's SED, as Piff draws stars. `piff_config(filter_name)` returns the Piff dict; `to_yaml`
 / `from_yaml` round-trip the settings.
 
-### `GaussianMoments` (`psf_fomo.models`)
-Signed convolution kernel with parameters (Mxx, Mxy, Myy) in native pix² along world axes: a
+### `GaussianMoments` (`psf_fomo.models`) — experimental
+A model component added by this package, not part of Piff; still being tested. Prefer Piff's
+`GaussianBlur` (below) unless the kernel must also sharpen. Signed convolution kernel with parameters (Mxx, Mxy, Myy) in native pix² along world axes: a
 sum of four tiny Gaussians with moments exactly M of any sign (linear in M, first-order
 accurate, starts at 0), so it can both broaden and sharpen. Stars whose per-star fit stops at
 `max_nfev` are counted (`fit_summary["kernel_max_nfev"]`). Importing `psf_fomo.models`
@@ -146,7 +147,7 @@ with the `oversampled` algorithms. Plot it with `plot_field(res, "T_model", "mod
   (native pixels) or at the centers of an `n_grid` × `n_grid` grid of cells; one row per
   position × algorithm (`x`, `y`, `algorithm`, T, e1, e2, g1, g2, sigma, du, dv, flux, `flag`).
   No simulation needed.
-- `compare_fits({"PG": res1, "signed+PG": res2, ...}, x=None, y=None, algorithms=("hsm",))`
+- `compare_fits({"PG": res1, "blur+PG": res2, ...}, x=None, y=None, algorithms=("hsm",))`
   (`psf_fomo.piff_simfit.compare_fits`): the same for several fits of one SCA, at the first fit's
   unflagged stars by default, with `dT_T`, `de1`, `de2` relative to the first fit. Works for
   simulation and real-data results alike.

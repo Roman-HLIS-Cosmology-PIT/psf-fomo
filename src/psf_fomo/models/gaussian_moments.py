@@ -1,5 +1,7 @@
 """``GaussianMoments``: a signed convolution kernel parameterized by its second moments.
 
+Experimental: a model component added by this package (not part of Piff), still being tested.
+
 Parameters (Mxx, Mxy, Myy) in native pix² along the world (u, v) axes (× 0.11″² gives
 arcsec²). Convolution adds moments, M_total = M_psf + M, so to first order the image responds
 linearly to them. Use it as a component of a Piff ``Convolve`` with a ``Polynomial``

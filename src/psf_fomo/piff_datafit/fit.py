@@ -27,7 +27,7 @@ Example
 >>> from psf_fomo.piff_datafit import L2Image, StarCatalog, PiffDataFit
 >>> img = L2Image("exp_wfi05.fits")
 >>> cat = StarCatalog("exp_wfi05_det.fits"); cat.set_cuts(min_snr=50, min_sep=2.0)
->>> cfg = PiffFitConfig(); cfg.set_optics("free"); cfg.add_kernel("signed")
+>>> cfg = PiffFitConfig(); cfg.set_optics("free"); cfg.add_kernel("blur")
 >>> fit = PiffDataFit(img, cat, cfg); fit.set_reserve(0.2, seed=3)
 >>> res = fit.run(save_to="out/real01")
 >>> res.fit_summary["chisq_dof"], res.summary(), res.moment_summary()

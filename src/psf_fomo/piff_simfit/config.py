@@ -17,7 +17,7 @@ Example
 -------
 >>> cfg = PiffFitConfig()
 >>> cfg.set_optics("free", max_zernike=11, prior_sigma=0.05)
->>> cfg.add_kernel("signed", order=0)
+>>> cfg.add_kernel("blur", order=0)
 >>> cfg.add_pixelgrid(size=5, scale=0.11, order=1)
 >>> piff_dict = cfg.piff_config("H158")
 """
@@ -133,8 +133,9 @@ class PiffFitConfig:
         Parameters
         ----------
         kind : {'signed', 'blur', 'gaussian'} or None
-            ``'signed'``: our ``GaussianMoments`` (M in pix², either sign, flux and center
-            fixed in its per-star fit). ``'blur'``: Piff's ``GaussianBlur`` (``[ixx, iyy,
+            ``'signed'`` (experimental): our ``GaussianMoments``, a model component added by
+            this package, not part of Piff (M in pix², either sign, flux and center fixed in
+            its per-star fit). ``'blur'``: Piff's ``GaussianBlur`` (``[ixx, iyy,
             ixy]`` in arcsec², projected onto PSD matrices so it can only broaden, flux and
             center fixed in its fit, starts at zero). ``'gaussian'``: Piff's ``Gaussian``
             (scale, g1, g2; its per-star fit also moves flux and center), ``init='delta'``.
