@@ -8,11 +8,11 @@ development and may be updated with high cadence
 
 psf-fomo needs Python ≥ 3.10, as well as GalSim and Piff. To use with most
 up-to-date versions of these codes, consider using the main branch of GalSim and Piff until a new
-tagged version with current changes is released. The roman module has been updated in GalSim's main branch
+tagged version with current changes is released. The Roman module has been updated in GalSim's main branch
 and contains a flip to the image that is not in v2.8.5 of the code.
 Piff has also had some additions that may not be included in the latest tagged version that are used here.
-If using this on real Roman data, beware that changes to both GalSim and Piff are ongoing. As develop, the 
-code here may also change. 
+If using this on real Roman data, beware that changes to both GalSim and Piff are ongoing. As these codebases develop,
+the code here may also change accordingly. 
 
 1. If you want to create an new environment with the needed
  dependencies, you can use:
@@ -20,7 +20,7 @@ code here may also change.
    conda env create -f environment.yml
    conda activate psf-fomo
    ```
-2. Install Piff at the pinned commit:
+2. Install Piff by cloning the repository and switching to the main branch:
    ```
    git clone https://github.com/rmjarvis/Piff.git
    cd Piff
@@ -29,7 +29,7 @@ code here may also change.
    ```
 3. Install psf-fomo. This also installs its other dependencies, including ngmix and TreeCorr:
    ```
-   git clone <this repository> psf-fomo
+   git clone https://github.com/Roman-HLIS-Cosmology-PIT/psf-fomo.git
    cd psf-fomo
    pip install .
    ```
